@@ -5,15 +5,19 @@ Entry point for the betting system.
 """
 
 import argparse
+import json
 import os
 from datetime import datetime, timedelta
 from typing import Dict, List
 
-from config import LEAGUES, BANKROLL, PATHS
-from model import BettingModel, TeamStats, MatchContext
+import pandas as pd
+
+from config import LEAGUES, BANKROLL, PATHS, NEWS_SETTINGS
+from model import BettingModel, TeamStats, MatchContext, LiveMatchState
 from scrapers import DataAggregator, OddsAPIScraper, UnderstatScraper, FootballDataScraper
 from tracker import BetTracker, CLVAnalyzer, BankrollManager
 from backtest import Backtester, BacktestConfig, ParameterOptimizer
+from enhanced_system import EnhancedBettingSystem
 
 
 class BettingSystem:
@@ -28,13 +32,25 @@ class BettingSystem:
         self.bankroll = BankrollManager()
         self.clv_analyzer = CLVAnalyzer(self.tracker)
     
-    def analyze_match(self, home_team: str, away_team: str, 
-                      league: str, odds: Dict = None) -> Dict:
+    def analyze_match(
+        self,
+        home_team: str,
+        away_team: str,
+        league: str,
+        odds: Dict = None,
+        match_datetime: datetime = None,
+        live_state: Dict = None,
+    ) -> Dict:
         """
         Full analysis of a single match.
         """
         # Get team data
-        match_data = self.aggregator.get_match_data(home_team, away_team, league)
+        match_data = self.aggregator.get_match_data(
+            home_team,
+            away_team,
+            league,
+            match_datetime=match_datetime,
+        )
         
         # Create team stats from data
         home_stats = self._create_team_stats(home_team, match_data.get("xg", {}).get("home"))
@@ -47,20 +63,66 @@ class BettingSystem:
         if elo_data.get("away"):
             away_stats.elo_rating = elo_data["away"]
         
+        context = self._build_match_context(match_data)
+
         # Generate prediction
-        prediction = self.model.predict_match(home_stats, away_stats)
+        if live_state:
+            live = LiveMatchState(
+                minute=live_state.get("minute", 0),
+                home_goals=live_state.get("home_goals", 0),
+                away_goals=live_state.get("away_goals", 0),
+            )
+            prediction = self.model.predict_live_match(home_stats, away_stats, live, context=context)
+        else:
+            prediction = self.model.predict_match(home_stats, away_stats, context=context)
+
+        # Research quality assessment
+        research = self.aggregator.assess_research_quality(
+            match_data,
+            match_datetime=match_datetime,
+        )
+        if research["score"] >= 75 and prediction.confidence == "HIGH":
+            research["recommendation"] = "HIGH_CONFIDENCE_SHORTLIST"
+        else:
+            research["recommendation"] = "STANDARD_REVIEW"
         
         # Find value bets
         value_bets = []
         if odds:
             value_bets = self.model.find_value_bets(prediction, odds)
+
+        report = self.model.generate_report(home_stats, away_stats, prediction, odds)
+        if live_state:
+            report = "\n".join(
+                [
+                    report,
+                    "",
+                    (
+                        "⏱️ LIVE STATE"
+                        f"\n   Minute: {live_state.get('minute', 0)}"
+                        f"\n   Score: {home_team} {live_state.get('home_goals', 0)}"
+                        f"-{live_state.get('away_goals', 0)} {away_team}"
+                    ),
+                ]
+            )
+        report = "\n".join(
+            [
+                report,
+                "",
+                self.aggregator.format_research_report(
+                    research, prediction.confidence
+                ),
+            ]
+        )
         
         return {
             "match": f"{home_team} vs {away_team}",
             "league": league,
             "prediction": prediction,
             "value_bets": value_bets,
-            "report": self.model.generate_report(home_stats, away_stats, prediction, odds),
+            "research": research,
+            "live_state": live_state,
+            "report": report,
             "raw_data": match_data,
         }
     
@@ -77,6 +139,77 @@ class BettingSystem:
             goals_conceded=xg_data.get("goals_against", 0),
             matches_played=xg_data.get("matches", 0),
         )
+
+    def _build_match_context(self, match_data: Dict) -> MatchContext:
+        """Build MatchContext from available data sources."""
+        weather_condition = self._normalize_weather(match_data.get("weather", {}))
+        team_news = match_data.get("team_news", {})
+        home_summary = team_news.get("home", {}).get("summary", {})
+        away_summary = team_news.get("away", {}).get("summary", {})
+
+        home_form = self._calculate_attack_form(home_summary.get("form", {}))
+        away_form = self._calculate_attack_form(away_summary.get("form", {}))
+        home_defense = self._calculate_defense_form(home_summary.get("form", {}))
+        away_defense = self._calculate_defense_form(away_summary.get("form", {}))
+
+        return MatchContext(
+            weather_condition=weather_condition,
+            home_key_players_out=home_summary.get("key_players_out", 0),
+            away_key_players_out=away_summary.get("key_players_out", 0),
+            home_absence_impact=home_summary.get("absence_impact", 0.0),
+            away_absence_impact=away_summary.get("absence_impact", 0.0),
+            home_attack_form=home_form,
+            away_attack_form=away_form,
+            home_defense_form=home_defense,
+            away_defense_form=away_defense,
+            home_card_risk=home_summary.get("card_risk", 0.0),
+            away_card_risk=away_summary.get("card_risk", 0.0),
+        )
+
+    @staticmethod
+    def _normalize_weather(weather: Dict) -> str:
+        """Map weather data to model-friendly labels."""
+        if not weather or weather.get("error"):
+            return "normal"
+
+        wind = weather.get("wind_speed", 0)
+        rain = weather.get("rain", 0)
+        temp = weather.get("temperature", 15)
+
+        if rain >= 5:
+            return "rain_heavy"
+        if wind >= 12:
+            return "wind_strong"
+        if temp >= 30:
+            return "extreme_heat"
+        if temp <= 0:
+            return "extreme_cold"
+        return "normal"
+
+    @staticmethod
+    def _calculate_attack_form(form: Dict) -> float:
+        """Calculate attacking form adjustment based on shots/xG trends."""
+        shots = form.get("shots_per90", 0.0)
+        xg_for = form.get("xg_for_last5", 0.0)
+
+        shot_delta = shots - NEWS_SETTINGS["league_avg_shots_per90"]
+        xg_delta = xg_for - NEWS_SETTINGS["league_avg_xg_last5"]
+
+        adjustment = (
+            shot_delta * NEWS_SETTINGS["form_shots_boost"]
+            + (xg_delta / 0.1) * NEWS_SETTINGS["form_xg_boost"]
+        )
+        return max(-NEWS_SETTINGS["max_form_adjustment"],
+                   min(NEWS_SETTINGS["max_form_adjustment"], adjustment))
+
+    @staticmethod
+    def _calculate_defense_form(form: Dict) -> float:
+        """Calculate defensive form adjustment based on xGA trends."""
+        xg_against = form.get("xg_against_last5", 0.0)
+        delta = NEWS_SETTINGS["league_avg_xg_against_last5"] - xg_against
+        adjustment = (delta / 0.1) * NEWS_SETTINGS["form_xg_boost"]
+        return max(-NEWS_SETTINGS["max_form_adjustment"],
+                   min(NEWS_SETTINGS["max_form_adjustment"], adjustment))
     
     def record_bet(self, match: str, league: str, market: str,
                    selection: str, odds: float, stake: float,
@@ -335,6 +468,10 @@ def main():
     analyze_parser.add_argument("--home", required=True, help="Home team")
     analyze_parser.add_argument("--away", required=True, help="Away team")
     analyze_parser.add_argument("--league", required=True, help="League key")
+    analyze_parser.add_argument("--kickoff", help="Kickoff time (YYYY-mm-dd HH:MM)")
+    analyze_parser.add_argument("--minute", type=int, help="Live minute (0-90)")
+    analyze_parser.add_argument("--home-goals", type=int, default=0, help="Live home goals")
+    analyze_parser.add_argument("--away-goals", type=int, default=0, help="Live away goals")
     
     # Backtest
     backtest_parser = subparsers.add_parser("backtest", help="Run backtest")
@@ -350,12 +487,48 @@ def main():
     
     # Workflow
     workflow_parser = subparsers.add_parser("workflow", help="Show workflow")
+    # Enhanced system
+    enhanced_parser = subparsers.add_parser("enhanced", help="Run enhanced ML system")
+    enhanced_parser.add_argument(
+        "--mode", choices=["train", "predict", "analyze"], required=True,
+        help="Operating mode"
+    )
+    enhanced_parser.add_argument(
+        "--league", type=str, required=True,
+        help="League code (e.g., E0, N1, T1)"
+    )
+    enhanced_parser.add_argument(
+        "--start-year", type=int, default=2018,
+        help="Start year for historical data"
+    )
+    enhanced_parser.add_argument(
+        "--fixtures-file", type=str, default=None,
+        help="JSON file with fixtures to predict"
+    )
     
     args = parser.parse_args()
     
     if args.command == "analyze":
         system = BettingSystem()
-        result = system.analyze_match(args.home, args.away, args.league)
+        match_datetime = None
+        if args.kickoff:
+            match_datetime = datetime.strptime(args.kickoff, "%Y-%m-%d %H:%M")
+
+        live_state = None
+        if args.minute is not None:
+            live_state = {
+                "minute": args.minute,
+                "home_goals": args.home_goals,
+                "away_goals": args.away_goals,
+            }
+
+        result = system.analyze_match(
+            args.home,
+            args.away,
+            args.league,
+            match_datetime=match_datetime,
+            live_state=live_state,
+        )
         print(result["report"])
     
     elif args.command == "backtest":
@@ -378,6 +551,18 @@ def main():
     
     elif args.command == "workflow":
         print(create_sample_workflow())
+    elif args.command == "enhanced":
+        system = EnhancedBettingSystem()
+        if args.mode == "train":
+            system.train(args.league, start_year=args.start_year)
+        elif args.mode == "analyze":
+            system.analyze_league(args.league, start_year=args.start_year)
+        elif args.mode == "predict":
+            if not args.fixtures_file:
+                raise SystemExit("Provide --fixtures-file with match fixtures to predict")
+            with open(args.fixtures_file) as f:
+                fixtures = json.load(f)
+            system.predict_matches(args.league, fixtures, start_year=args.start_year)
     
     else:
         parser.print_help()
