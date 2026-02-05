@@ -79,6 +79,21 @@ BANKROLL = {
 }
 
 # =============================================================================
+# NEWS / AVAILABILITY SETTINGS
+# =============================================================================
+NEWS_SETTINGS = {
+    "max_absence_impact": 0.25,     # Cap total absence impact
+    "doubtful_weight": 0.5,         # Doubtful players count half impact
+    "card_risk_penalty": 0.03,      # Reduce xG per card risk point
+    "form_shots_boost": 0.02,       # xG boost per +1 shot/90 vs league avg
+    "form_xg_boost": 0.03,          # xG boost per +0.1 xG in last 5
+    "max_form_adjustment": 0.12,
+    "league_avg_shots_per90": 12.5,
+    "league_avg_xg_last5": 6.5,
+    "league_avg_xg_against_last5": 6.5,
+}
+
+# =============================================================================
 # VALUE BET THRESHOLDS
 # =============================================================================
 VALUE_THRESHOLDS = {
@@ -203,6 +218,7 @@ PATHS = {
     "odds_data": "data/odds/",
     "predictions": "data/predictions/",
     "backtest_results": "data/backtest/",
+    "news_data": "data/news/",
     "bet_tracker": "data/bet_tracker.json",
     "clv_tracker": "data/clv_tracker.json",
 }

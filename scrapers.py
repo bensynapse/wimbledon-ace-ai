@@ -27,7 +27,7 @@ except ImportError:
     HAS_SOCCERDATA = False
     print("Warning: soccerdata not installed. Run: pip install soccerdata")
 
-from config import API_KEYS, LEAGUES, DATA_SOURCES, PATHS
+from config import API_KEYS, LEAGUES, DATA_SOURCES, PATHS, NEWS_SETTINGS
 
 
 class OddsAPIScraper:
@@ -463,7 +463,69 @@ class SoccerDataWrapper:
             return sofascore.read_player_ratings()
         except Exception as e:
             print(f"Error: {e}")
-            return pd.DataFrame()
+        return pd.DataFrame()
+
+
+class TeamNewsLoader:
+    """
+    Load injuries, suspensions, and key player info from local JSON files.
+    """
+
+    def __init__(self, base_dir: str = None):
+        self.base_dir = base_dir or PATHS["news_data"]
+
+    def get_team_news(self, team_name: str, league: str) -> Dict:
+        """Return normalized team news for a team."""
+        news_blob = self._load_news_blob(league)
+        teams_section = news_blob.get("teams", news_blob)
+        team_data = teams_section.get(team_name, {})
+        return self._summarize_team_news(team_data)
+
+    def _load_news_blob(self, league: str) -> Dict:
+        """Load league-specific news file or fall back to global."""
+        league_path = os.path.join(self.base_dir, f"{league}.json")
+        global_path = os.path.join(self.base_dir, "global.json")
+        for path in (league_path, global_path):
+            if os.path.exists(path):
+                with open(path, "r") as handle:
+                    return json.load(handle)
+        return {}
+
+    def _summarize_team_news(self, team_data: Dict) -> Dict:
+        injuries = team_data.get("injuries", [])
+        suspensions = team_data.get("suspensions", [])
+        doubts = team_data.get("doubts", [])
+        key_players = team_data.get("key_players", [])
+        form = team_data.get("form", {})
+        card_risk = team_data.get("card_risk", 0)
+
+        injury_impact = self._sum_impact(injuries)
+        suspension_impact = self._sum_impact(suspensions)
+        doubtful_impact = self._sum_impact(doubts) * NEWS_SETTINGS["doubtful_weight"]
+
+        absence_impact = injury_impact + suspension_impact + doubtful_impact
+        absence_impact = min(absence_impact, NEWS_SETTINGS["max_absence_impact"])
+
+        return {
+            "injuries": injuries,
+            "suspensions": suspensions,
+            "doubts": doubts,
+            "key_players": key_players,
+            "summary": {
+                "absence_impact": absence_impact,
+                "key_players_out": len([player for player in key_players if player.get("status") == "out"]),
+                "card_risk": card_risk,
+                "form": {
+                    "shots_per90": form.get("shots_per90", 0.0),
+                    "xg_for_last5": form.get("xg_for_last5", 0.0),
+                    "xg_against_last5": form.get("xg_against_last5", 0.0),
+                },
+            },
+        }
+
+    @staticmethod
+    def _sum_impact(entries: List[Dict]) -> float:
+        return sum(entry.get("impact", 0.04) for entry in entries)
 
 
 class DataAggregator:
@@ -478,6 +540,7 @@ class DataAggregator:
         self.club_elo = ClubEloScraper()
         self.weather = WeatherScraper()
         self.soccerdata = SoccerDataWrapper()
+        self.news_loader = TeamNewsLoader()
     
     def get_match_data(self, home_team: str, away_team: str, 
                        league: str, match_datetime: datetime = None) -> Dict:
@@ -531,8 +594,118 @@ class DataAggregator:
         if fd_code:
             ref_stats = self.football_data.get_referee_stats(fd_code)
             data["referee_stats_available"] = not ref_stats.empty
+
+        # 5. Get team news and availability (local data)
+        home_news = self.news_loader.get_team_news(home_team, league)
+        away_news = self.news_loader.get_team_news(away_team, league)
+        if home_news or away_news:
+            data["team_news"] = {
+                "home": home_news,
+                "away": away_news,
+            }
         
         return data
+
+    def assess_research_quality(
+        self,
+        match_data: Dict,
+        match_datetime: datetime = None,
+    ) -> Dict:
+        """
+        Assess data coverage and research quality for a match.
+        """
+        gaps = []
+        sources = []
+        score = 0
+
+        xg_data = match_data.get("xg", {})
+        has_home_xg = bool(xg_data.get("home"))
+        has_away_xg = bool(xg_data.get("away"))
+
+        if has_home_xg and has_away_xg:
+            score += 35
+            sources.append("understat_xg")
+        elif has_home_xg or has_away_xg:
+            score += 15
+            sources.append("understat_xg_partial")
+            gaps.append("xG data missing for one team")
+        else:
+            gaps.append("xG data missing for both teams")
+
+        elo_data = match_data.get("elo", {})
+        has_home_elo = bool(elo_data.get("home"))
+        has_away_elo = bool(elo_data.get("away"))
+
+        if has_home_elo and has_away_elo:
+            score += 20
+            sources.append("club_elo")
+        elif has_home_elo or has_away_elo:
+            score += 8
+            sources.append("club_elo_partial")
+            gaps.append("ELO rating missing for one team")
+        else:
+            gaps.append("ELO ratings missing for both teams")
+
+        if match_data.get("referee_stats_available"):
+            score += 10
+            sources.append("football_data_referee")
+        else:
+            gaps.append("Referee stats unavailable")
+
+        team_news = match_data.get("team_news", {})
+        if team_news.get("home") and team_news.get("away"):
+            score += 15
+            sources.append("team_news")
+        elif team_news.get("home") or team_news.get("away"):
+            score += 7
+            sources.append("team_news_partial")
+            gaps.append("Team news missing for one side")
+        else:
+            gaps.append("Team news unavailable")
+
+        if match_datetime:
+            if match_data.get("weather"):
+                score += 5
+                sources.append("weather")
+            else:
+                gaps.append("Weather data unavailable for kickoff time")
+
+        if sources:
+            score += 20
+
+        score = min(score, 100)
+
+        if score >= 80:
+            grade = "A"
+        elif score >= 65:
+            grade = "B"
+        elif score >= 50:
+            grade = "C"
+        else:
+            grade = "D"
+
+        return {
+            "score": score,
+            "grade": grade,
+            "sources": sources,
+            "gaps": gaps,
+        }
+
+    def format_research_report(self, research: Dict, prediction_confidence: str) -> str:
+        """
+        Format research quality info into a readable report.
+        """
+        report = []
+        report.append("🧠 RESEARCH QUALITY")
+        report.append(
+            f"   Score: {research['score']}/100 | Grade: {research['grade']} "
+            f"| Model Confidence: {prediction_confidence}"
+        )
+        if research["sources"]:
+            report.append(f"   Sources: {', '.join(research['sources'])}")
+        if research["gaps"]:
+            report.append(f"   Gaps: {', '.join(research['gaps'])}")
+        return "\n".join(report)
     
     def save_data(self, data: Dict, filename: str):
         """Save data to JSON file."""
