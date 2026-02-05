@@ -24,11 +24,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 
-from sklearn.ensemble import (
-    RandomForestClassifier,
-    GradientBoostingClassifier,
-    VotingClassifier
-)
+from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.preprocessing import StandardScaler
@@ -37,6 +33,7 @@ from sklearn.metrics import (
     accuracy_score, f1_score, classification_report,
     log_loss, brier_score_loss
 )
+from xgboost import XGBClassifier
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +99,19 @@ class EnsemblePredictor:
     def build_models(self) -> Dict[str, Any]:
         """Build the individual classifiers."""
         models = {
-            "xgboost": GradientBoostingClassifier(
+            "xgboost": XGBClassifier(
+                objective="multi:softprob",
+                num_class=3,
                 n_estimators=300,
                 max_depth=5,
                 learning_rate=0.05,
                 subsample=0.8,
-                min_samples_leaf=10,
-                random_state=42
+                colsample_bytree=0.8,
+                min_child_weight=5,
+                reg_lambda=1.0,
+                eval_metric="mlogloss",
+                random_state=42,
+                n_jobs=-1
             ),
             "random_forest": RandomForestClassifier(
                 n_estimators=300,
