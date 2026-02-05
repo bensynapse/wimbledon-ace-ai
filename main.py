@@ -23,8 +23,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-import numpy as np
 import pandas as pd
+import numpy as np
 
 from config import (
     API_FOOTBALL_KEY, ODDS_API_KEY, NEWS_API_KEY,
