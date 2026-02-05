@@ -1,0 +1,19 @@
+# Core dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+requests>=2.28.0
+
+# Web scraping
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+
+# Soccer data (optional but recommended)
+soccerdata>=1.4.0
+
+# Data storage and export
+openpyxl>=3.1.0  # For Excel export
+
+# CLI enhancements (optional)
+rich>=13.0.0  # Pretty printing
+tqdm>=4.65.0  # Progress bars
