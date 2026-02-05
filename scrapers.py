@@ -533,6 +533,96 @@ class DataAggregator:
             data["referee_stats_available"] = not ref_stats.empty
         
         return data
+
+    def assess_research_quality(
+        self,
+        match_data: Dict,
+        match_datetime: datetime = None,
+    ) -> Dict:
+        """
+        Assess data coverage and research quality for a match.
+        """
+        gaps = []
+        sources = []
+        score = 0
+
+        xg_data = match_data.get("xg", {})
+        has_home_xg = bool(xg_data.get("home"))
+        has_away_xg = bool(xg_data.get("away"))
+
+        if has_home_xg and has_away_xg:
+            score += 35
+            sources.append("understat_xg")
+        elif has_home_xg or has_away_xg:
+            score += 15
+            sources.append("understat_xg_partial")
+            gaps.append("xG data missing for one team")
+        else:
+            gaps.append("xG data missing for both teams")
+
+        elo_data = match_data.get("elo", {})
+        has_home_elo = bool(elo_data.get("home"))
+        has_away_elo = bool(elo_data.get("away"))
+
+        if has_home_elo and has_away_elo:
+            score += 20
+            sources.append("club_elo")
+        elif has_home_elo or has_away_elo:
+            score += 8
+            sources.append("club_elo_partial")
+            gaps.append("ELO rating missing for one team")
+        else:
+            gaps.append("ELO ratings missing for both teams")
+
+        if match_data.get("referee_stats_available"):
+            score += 10
+            sources.append("football_data_referee")
+        else:
+            gaps.append("Referee stats unavailable")
+
+        if match_datetime:
+            if match_data.get("weather"):
+                score += 5
+                sources.append("weather")
+            else:
+                gaps.append("Weather data unavailable for kickoff time")
+
+        if sources:
+            score += 20
+
+        score = min(score, 100)
+
+        if score >= 80:
+            grade = "A"
+        elif score >= 65:
+            grade = "B"
+        elif score >= 50:
+            grade = "C"
+        else:
+            grade = "D"
+
+        return {
+            "score": score,
+            "grade": grade,
+            "sources": sources,
+            "gaps": gaps,
+        }
+
+    def format_research_report(self, research: Dict, prediction_confidence: str) -> str:
+        """
+        Format research quality info into a readable report.
+        """
+        report = []
+        report.append("🧠 RESEARCH QUALITY")
+        report.append(
+            f"   Score: {research['score']}/100 | Grade: {research['grade']} "
+            f"| Model Confidence: {prediction_confidence}"
+        )
+        if research["sources"]:
+            report.append(f"   Sources: {', '.join(research['sources'])}")
+        if research["gaps"]:
+            report.append(f"   Gaps: {', '.join(research['gaps'])}")
+        return "\n".join(report)
     
     def save_data(self, data: Dict, filename: str):
         """Save data to JSON file."""

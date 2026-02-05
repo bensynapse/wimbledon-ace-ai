@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List
 
 from config import LEAGUES, BANKROLL, PATHS
-from model import BettingModel, TeamStats, MatchContext
+from model import BettingModel, TeamStats, MatchContext, LiveMatchState
 from scrapers import DataAggregator, OddsAPIScraper, UnderstatScraper, FootballDataScraper
 from tracker import BetTracker, CLVAnalyzer, BankrollManager
 from backtest import Backtester, BacktestConfig, ParameterOptimizer
@@ -28,13 +28,25 @@ class BettingSystem:
         self.bankroll = BankrollManager()
         self.clv_analyzer = CLVAnalyzer(self.tracker)
     
-    def analyze_match(self, home_team: str, away_team: str, 
-                      league: str, odds: Dict = None) -> Dict:
+    def analyze_match(
+        self,
+        home_team: str,
+        away_team: str,
+        league: str,
+        odds: Dict = None,
+        match_datetime: datetime = None,
+        live_state: Dict = None,
+    ) -> Dict:
         """
         Full analysis of a single match.
         """
         # Get team data
-        match_data = self.aggregator.get_match_data(home_team, away_team, league)
+        match_data = self.aggregator.get_match_data(
+            home_team,
+            away_team,
+            league,
+            match_datetime=match_datetime,
+        )
         
         # Create team stats from data
         home_stats = self._create_team_stats(home_team, match_data.get("xg", {}).get("home"))
@@ -48,19 +60,63 @@ class BettingSystem:
             away_stats.elo_rating = elo_data["away"]
         
         # Generate prediction
-        prediction = self.model.predict_match(home_stats, away_stats)
+        if live_state:
+            live = LiveMatchState(
+                minute=live_state.get("minute", 0),
+                home_goals=live_state.get("home_goals", 0),
+                away_goals=live_state.get("away_goals", 0),
+            )
+            prediction = self.model.predict_live_match(home_stats, away_stats, live)
+        else:
+            prediction = self.model.predict_match(home_stats, away_stats)
+
+        # Research quality assessment
+        research = self.aggregator.assess_research_quality(
+            match_data,
+            match_datetime=match_datetime,
+        )
+        if research["score"] >= 75 and prediction.confidence == "HIGH":
+            research["recommendation"] = "HIGH_CONFIDENCE_SHORTLIST"
+        else:
+            research["recommendation"] = "STANDARD_REVIEW"
         
         # Find value bets
         value_bets = []
         if odds:
             value_bets = self.model.find_value_bets(prediction, odds)
+
+        report = self.model.generate_report(home_stats, away_stats, prediction, odds)
+        if live_state:
+            report = "\n".join(
+                [
+                    report,
+                    "",
+                    (
+                        "⏱️ LIVE STATE"
+                        f"\n   Minute: {live_state.get('minute', 0)}"
+                        f"\n   Score: {home_team} {live_state.get('home_goals', 0)}"
+                        f"-{live_state.get('away_goals', 0)} {away_team}"
+                    ),
+                ]
+            )
+        report = "\n".join(
+            [
+                report,
+                "",
+                self.aggregator.format_research_report(
+                    research, prediction.confidence
+                ),
+            ]
+        )
         
         return {
             "match": f"{home_team} vs {away_team}",
             "league": league,
             "prediction": prediction,
             "value_bets": value_bets,
-            "report": self.model.generate_report(home_stats, away_stats, prediction, odds),
+            "research": research,
+            "live_state": live_state,
+            "report": report,
             "raw_data": match_data,
         }
     
@@ -335,6 +391,10 @@ def main():
     analyze_parser.add_argument("--home", required=True, help="Home team")
     analyze_parser.add_argument("--away", required=True, help="Away team")
     analyze_parser.add_argument("--league", required=True, help="League key")
+    analyze_parser.add_argument("--kickoff", help="Kickoff time (YYYY-mm-dd HH:MM)")
+    analyze_parser.add_argument("--minute", type=int, help="Live minute (0-90)")
+    analyze_parser.add_argument("--home-goals", type=int, default=0, help="Live home goals")
+    analyze_parser.add_argument("--away-goals", type=int, default=0, help="Live away goals")
     
     # Backtest
     backtest_parser = subparsers.add_parser("backtest", help="Run backtest")
@@ -355,7 +415,25 @@ def main():
     
     if args.command == "analyze":
         system = BettingSystem()
-        result = system.analyze_match(args.home, args.away, args.league)
+        match_datetime = None
+        if args.kickoff:
+            match_datetime = datetime.strptime(args.kickoff, "%Y-%m-%d %H:%M")
+
+        live_state = None
+        if args.minute is not None:
+            live_state = {
+                "minute": args.minute,
+                "home_goals": args.home_goals,
+                "away_goals": args.away_goals,
+            }
+
+        result = system.analyze_match(
+            args.home,
+            args.away,
+            args.league,
+            match_datetime=match_datetime,
+            live_state=live_state,
+        )
         print(result["report"])
     
     elif args.command == "backtest":

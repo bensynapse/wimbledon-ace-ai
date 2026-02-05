@@ -51,6 +51,14 @@ class MatchContext:
 
 
 @dataclass
+class LiveMatchState:
+    """Live match state for in-play analysis."""
+    minute: int
+    home_goals: int
+    away_goals: int
+
+
+@dataclass
 class Prediction:
     """Container for match prediction results."""
     home_win_prob: float
@@ -484,6 +492,61 @@ class BettingModel:
             most_likely_scores=most_likely,
             confidence=confidence,
         )
+
+    def predict_live_match(
+        self,
+        home_team: TeamStats,
+        away_team: TeamStats,
+        live_state: LiveMatchState,
+        context: MatchContext = None,
+        league_avg_goals: float = 2.7,
+    ) -> Prediction:
+        """
+        Generate in-play prediction using remaining-time Poisson adjustments.
+        """
+        home_xg, away_xg = self.poisson.calculate_expected_goals(
+            home_team, away_team, league_avg_goals
+        )
+
+        if context:
+            home_xg, away_xg = self.adjuster.adjust_prediction(
+                home_xg, away_xg, context
+            )
+
+        minute = max(0, min(90, live_state.minute))
+        remaining_ratio = max(0.0, (90 - minute) / 90)
+        remaining_home_xg = home_xg * remaining_ratio
+        remaining_away_xg = away_xg * remaining_ratio
+
+        score_matrix = self.poisson.generate_score_matrix(
+            remaining_home_xg, remaining_away_xg
+        )
+        probs = self._calculate_live_probabilities(
+            score_matrix, live_state.home_goals, live_state.away_goals
+        )
+
+        most_likely = self._calculate_live_scorelines(
+            score_matrix, live_state.home_goals, live_state.away_goals
+        )
+
+        confidence = self._calculate_live_confidence(
+            home_team, away_team, context, minute
+        )
+
+        return Prediction(
+            home_win_prob=probs["home_win"],
+            draw_prob=probs["draw"],
+            away_win_prob=probs["away_win"],
+            expected_home_goals=live_state.home_goals + remaining_home_xg,
+            expected_away_goals=live_state.away_goals + remaining_away_xg,
+            over_2_5_prob=probs["over_2_5"],
+            under_2_5_prob=probs["under_2_5"],
+            btts_yes_prob=probs["btts_yes"],
+            btts_no_prob=probs["btts_no"],
+            score_matrix=score_matrix,
+            most_likely_scores=most_likely,
+            confidence=confidence,
+        )
     
     def find_value_bets(self, prediction: Prediction, odds: Dict) -> List[Dict]:
         """Find value bets for a match."""
@@ -528,6 +591,78 @@ class BettingModel:
             return "MEDIUM"
         else:
             return "LOW"
+
+    def _calculate_live_probabilities(
+        self,
+        score_matrix: Dict[Tuple[int, int], float],
+        home_goals: int,
+        away_goals: int,
+    ) -> Dict[str, float]:
+        """Calculate live probabilities from remaining-goals matrix."""
+        home_win = draw = away_win = 0.0
+        over_2_5 = under_2_5 = 0.0
+        btts_yes = btts_no = 0.0
+
+        for (home_add, away_add), prob in score_matrix.items():
+            final_home = home_goals + home_add
+            final_away = away_goals + away_add
+
+            if final_home > final_away:
+                home_win += prob
+            elif final_home == final_away:
+                draw += prob
+            else:
+                away_win += prob
+
+            total_goals = final_home + final_away
+            if total_goals > 2.5:
+                over_2_5 += prob
+            else:
+                under_2_5 += prob
+
+            if final_home > 0 and final_away > 0:
+                btts_yes += prob
+            else:
+                btts_no += prob
+
+        return {
+            "home_win": home_win,
+            "draw": draw,
+            "away_win": away_win,
+            "over_2_5": over_2_5,
+            "under_2_5": under_2_5,
+            "btts_yes": btts_yes,
+            "btts_no": btts_no,
+        }
+
+    def _calculate_live_scorelines(
+        self,
+        score_matrix: Dict[Tuple[int, int], float],
+        home_goals: int,
+        away_goals: int,
+    ) -> List[Tuple[Tuple[int, int], float]]:
+        """Convert remaining goals matrix to full-time scorelines."""
+        full_time = {}
+        for (home_add, away_add), prob in score_matrix.items():
+            final_score = (home_goals + home_add, away_goals + away_add)
+            full_time[final_score] = full_time.get(final_score, 0) + prob
+
+        return sorted(full_time.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    def _calculate_live_confidence(
+        self,
+        home_team: TeamStats,
+        away_team: TeamStats,
+        context: MatchContext,
+        minute: int,
+    ) -> str:
+        """Adjust confidence based on live match minute."""
+        base = self._calculate_confidence(home_team, away_team, context)
+        if minute < 15 and base == "HIGH":
+            return "MEDIUM"
+        if minute >= 60 and base == "MEDIUM":
+            return "HIGH"
+        return base
     
     def generate_report(self, home_team: TeamStats, away_team: TeamStats,
                         prediction: Prediction, odds: Dict = None) -> str:
