@@ -1,0 +1,3 @@
+Accuracy,F1,Precision,Recall,data,Model,Model Type
+0.89,0.877,0.933,0.854,train,Premier-League-England-01,<class 'src.models.classifiers.extremeboosting.XGBoost'>
+0.529,0.38,0.42,0.431,eval,Premier-League-England-01,<class 'src.models.classifiers.extremeboosting.XGBoost'>
