@@ -1,5 +1,8 @@
 import React, { useState } from 'react';
-import { allSports, demoRefs, earningsData, months, Referee } from './data';
+import { allSports, demoDisputes, demoMsgs, demoRefs, earningsData, months, Referee } from './data';
+import { ChatItem, ChatView } from './screens/Chat';
+  const [chat, setChat] = useState<ChatItem | null>(null);
+  const [subView, setSubView] = useState<string | null>(null);
 import { Av, Bdg, Btn, Stars, StatCard } from './components';
 
 const MiniChart = ({ data, h = 60 }: { data: number[]; h?: number }) => {
@@ -87,6 +90,7 @@ export default function App() {
   return (
     <div className="relative mx-auto min-h-[100dvh] max-w-[430px] overflow-x-hidden bg-bg pb-20 font-sans">
       {SOS}
+      {chat && <ChatView chat={chat} onBack={() => setChat(null)} />}
       {toast && (
         <div className="fixed left-1/2 top-11 z-[2000] -translate-x-1/2 rounded-full bg-accent px-5 py-2 text-xs font-bold text-black shadow-lg">
           {toast}
@@ -112,7 +116,7 @@ export default function App() {
       </div>
 
       <div className="px-4.5 pt-2">
-        {view === 'home' && !selRef && (
+        {view === 'home' && !selRef && !subView && (
           <>
             <div className="mb-3.5 grid grid-cols-4 gap-1.5">
               <StatCard v="47" l="Bookings" />
@@ -136,6 +140,26 @@ export default function App() {
                   </span>
                 ))}
               </div>
+            </div>
+
+            <div className="mb-3.5 grid grid-cols-3 gap-1.5">
+              {[
+                ['📋', 'Post Match', () => {
+                  setView('post');
+                  setSubView(null);
+                }],
+                ['⚖️', 'Disputes', () => setSubView('disputes')],
+                ['📄', 'Invoices', () => setSubView('invoices')],
+              ].map(([icon, label, action], idx) => (
+                <button
+                  key={idx}
+                  onClick={action as () => void}
+                  className="cursor-pointer rounded-xl border border-border bg-card p-3 text-center transition-colors hover:bg-cardAlt"
+                >
+                  <div className="mb-0.5 text-lg">{icon as string}</div>
+                  <div className="text-[10px] font-semibold text-text">{label as string}</div>
+                </button>
+              ))}
             </div>
 
             <div className="mb-4">
@@ -245,7 +269,11 @@ export default function App() {
             </div>
 
             <div className="flex gap-2">
-              <Btn full v="secondary">
+              <Btn
+                full
+                v="secondary"
+                onClick={() => setChat({ from: selRef.name, av: selRef.av, last: "Hi, I'd like to discuss the match.", time: 'now' })}
+              >
                 💬 Chat
               </Btn>
               <Btn
@@ -286,3 +314,145 @@ export default function App() {
     </div>
   );
 }
+                onClick={() => setChat(m)}
+        {view === 'profile' && !subView && (
+                ['📊', 'Analytics', 'Bekijk je statistieken'],
+                  onClick={() => {
+                    if (title === 'Analytics') setSubView('analytics');
+                    if (title === 'Invoices & Tax') setSubView('invoices');
+                    if (title === 'Disputes') setSubView('disputes');
+                  }}
+
+        {subView === 'analytics' && (
+          <div className="animate-in slide-in-from-right-8 absolute inset-0 z-50 bg-bg p-4 duration-300">
+            <div className="mt-2 mb-4 flex items-center gap-2.5">
+              <button onClick={() => setSubView(null)} className="cursor-pointer border-none bg-transparent text-base text-sec">
+                ←
+              </button>
+              <h2 className="m-0 text-[17px] font-bold text-text">Analytics</h2>
+            </div>
+            <div className="mb-3.5 rounded-xl border border-border bg-card p-3">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-text">Revenue</span>
+                <span className="text-[11px] font-semibold text-accent">€5,460</span>
+              </div>
+              <MiniChart data={earningsData} h={80} />
+              <div className="mt-2 flex justify-between">
+                {months.map((m) => (
+                  <span key={m} className="text-[7px] text-dim">
+                    {m}
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <StatCard v="156" l="Matches" />
+              <StatCard v="4.8" l="Avg Rating" c="text-star" />
+              <StatCard v="98%" l="Response Rate" c="text-info" />
+              <StatCard v="2,340" l="Km Driven" />
+            </div>
+          </div>
+        )}
+
+        {subView === 'disputes' && (
+          <div className="animate-in slide-in-from-right-8 absolute inset-0 z-50 bg-bg p-4 duration-300">
+            <div className="mt-2 mb-4 flex items-center gap-2.5">
+              <button onClick={() => setSubView(null)} className="cursor-pointer border-none bg-transparent text-base text-sec">
+                ←
+              </button>
+              <h2 className="m-0 text-[17px] font-bold text-text">Disputes</h2>
+            </div>
+            {demoDisputes.map((d) => (
+              <div key={d.id} className="mb-2 rounded-xl border border-border bg-card p-3.5">
+                <div className="mb-1.5 flex justify-between">
+                  <span className="text-xs font-bold text-text">{d.match}</span>
+                  <Bdg
+                    c={d.status === 'open' ? 'text-warning' : 'text-accent'}
+                    bg={d.status === 'open' ? 'bg-warning/10' : 'bg-accent/10'}
+                  >
+                    {d.status}
+                  </Bdg>
+                </div>
+                <div className="mb-2 text-[11px] text-sec">{d.desc}</div>
+                <div className="mt-2 flex items-center justify-between border-t border-border pt-2">
+                  <span className="text-[10px] text-dim">
+                    📅 {d.date} • {d.type}
+                  </span>
+                  {d.status === 'open' && (
+                    <Btn sm v="outline" onClick={() => showToast('Response sent')}>
+                      Respond
+                    </Btn>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {subView === 'invoices' && (
+          <div className="animate-in slide-in-from-right-8 absolute inset-0 z-50 overflow-y-auto bg-bg p-4 pb-20 duration-300">
+            <div className="mt-2 mb-4 flex items-center gap-2.5">
+              <button onClick={() => setSubView(null)} className="cursor-pointer border-none bg-transparent text-base text-sec">
+                ←
+              </button>
+              <h2 className="m-0 text-[17px] font-bold text-text">Invoices & Tax</h2>
+            </div>
+            {[
+              { id: 'INV-2026-047', club: 'SC Eibergen', date: '12 Apr', amount: '€46.30', status: 'paid' },
+              { id: 'INV-2026-046', club: 'HC Groenlo', date: '6 Apr', amount: '€52.62', status: 'paid' },
+              { id: 'INV-2026-045', club: 'HV Achterhoek', date: '29 Mar', amount: '€38.05', status: 'pending' },
+            ].map((inv) => (
+              <div
+                key={inv.id}
+                className="mb-1.5 flex items-center justify-between rounded-xl border border-border bg-card p-3 transition-colors hover:bg-cardAlt"
+              >
+                <div>
+                  <div className="text-xs font-bold text-text">{inv.club}</div>
+                  <div className="text-[10px] text-sec">
+                    {inv.id} • {inv.date}
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="mb-0.5 text-[13px] font-bold text-accent">{inv.amount}</div>
+                  <Bdg c={inv.status === 'paid' ? 'text-accent' : 'text-warning'} bg={inv.status === 'paid' ? 'bg-accent/10' : 'bg-warning/10'}>
+                    {inv.status}
+                  </Bdg>
+                </div>
+              </div>
+            ))}
+
+            <div className="mt-3.5 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => showToast('PDF downloaded')}
+                className="cursor-pointer rounded-xl border border-border bg-card p-3.5 text-center hover:bg-cardAlt"
+              >
+                <div className="text-lg">📄</div>
+                <div className="mt-1 text-[10px] font-semibold text-text">Download Invoice PDF</div>
+              </button>
+              <button
+                onClick={() => showToast('CSV exported')}
+                className="cursor-pointer rounded-xl border border-border bg-card p-3.5 text-center hover:bg-cardAlt"
+              >
+                <div className="text-lg">📊</div>
+                <div className="mt-1 text-[10px] font-semibold text-text">Export Year Report (CSV)</div>
+              </button>
+            </div>
+
+            <div className="mt-3 rounded-xl border border-border bg-surface p-3.5">
+              <h4 className="m-0 mb-1.5 text-xs font-bold text-text">2026 Tax Summary</h4>
+              {[
+                ['Total earned', '€5,460'],
+                ['Total travel (km)', '2,340 km'],
+                ['Travel deduction', '€491.40'],
+                ['Matches officiated', '156'],
+                ['Platform fees paid', '€780'],
+              ].map(([label, value], i) => (
+                <div key={i} className={`flex justify-between py-1 text-[11px] text-sec ${i < 4 ? 'border-b border-border' : ''}`}>
+                  <span>{label}</span>
+                  <span className="font-semibold text-text">{value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+              setSubView(null);
