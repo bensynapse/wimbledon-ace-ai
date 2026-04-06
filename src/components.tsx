@@ -140,3 +140,9 @@ export const StatCard = ({
     <div className="mt-1 text-[8px] font-semibold uppercase tracking-widest text-sec">{l}</div>
   </div>
 );
+
+// Readable aliases for team-scale codebases; short names remain for backward compatibility.
+export const Avatar = Av;
+export const Badge = Bdg;
+export const Input = Inp;
+export const Button = Btn;

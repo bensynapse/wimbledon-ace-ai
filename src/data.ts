@@ -12,6 +12,19 @@ export type SportType =
   | 'waterpolo'
   | 'ijshockey';
 
+export type Badge =
+  | 'Top Rated'
+  | 'KNVB'
+  | 'Quick Reply'
+  | 'KNHB'
+  | 'Superhost'
+  | 'New'
+  | 'International'
+  | 'FA'
+  | 'Rising Star';
+
+export type WeekAvailability = [boolean, boolean, boolean, boolean, boolean, boolean, boolean];
+
 export interface Referee {
   id: number;
   name: string;
@@ -25,13 +38,13 @@ export interface Referee {
   av: string;
   verified: boolean;
   idVerified: boolean;
-  badges: string[];
+  badges: Badge[];
   bio: string;
   matches: number;
   resp: number;
   respTime: string;
   langs: string[];
-  avail: boolean[];
+  avail: WeekAvailability;
   earned: number;
   fav: boolean;
   insuranceOpt: boolean;
@@ -104,6 +117,106 @@ export const demoRefs: Referee[] = [
     langs: ['NL', 'EN'],
     avail: [true, false, true, true, false, true, true],
     earned: 2670,
+    fav: true,
+    insuranceOpt: false,
+    videoIntro: false,
+  },
+  {
+    id: 3,
+    name: 'Bas Hendriks',
+    sports: ['hockey'],
+    rating: 4.9,
+    reviews: 62,
+    tarief: 40,
+    level: 'Bonds',
+    km: 22,
+    city: 'Deventer',
+    av: 'BH',
+    verified: true,
+    idVerified: true,
+    badges: ['Top Rated', 'KNHB', 'Superhost'],
+    bio: 'KNHB certified umpire for all levels. Reliable and professional.',
+    matches: 234,
+    resp: 100,
+    respTime: '< 30m',
+    langs: ['NL', 'EN', 'DE'],
+    avail: [true, true, true, true, true, false, false],
+    earned: 9360,
+    fav: false,
+    insuranceOpt: true,
+    videoIntro: true,
+  },
+  {
+    id: 4,
+    name: 'Sophie van Dijk',
+    sports: ['handbal', 'volleybal'],
+    rating: 4.4,
+    reviews: 18,
+    tarief: 28,
+    level: 'Club',
+    km: 5,
+    city: 'Borculo',
+    av: 'SD',
+    verified: false,
+    idVerified: false,
+    badges: ['New'],
+    bio: 'Starting referee eager to gain experience across multiple sports.',
+    matches: 12,
+    resp: 87,
+    respTime: '< 3h',
+    langs: ['NL'],
+    avail: [false, false, true, true, false, true, true],
+    earned: 336,
+    fav: false,
+    insuranceOpt: false,
+    videoIntro: false,
+  },
+  {
+    id: 5,
+    name: 'James Wilson',
+    sports: ['voetbal', 'rugby'],
+    rating: 4.7,
+    reviews: 55,
+    tarief: 45,
+    level: 'National',
+    km: 35,
+    city: 'London',
+    av: 'JW',
+    verified: true,
+    idVerified: true,
+    badges: ['International', 'FA'],
+    bio: 'FA Level 5. Grassroots to semi-pro. Available weekends.',
+    matches: 312,
+    resp: 96,
+    respTime: '< 1h',
+    langs: ['EN', 'FR'],
+    avail: [true, true, true, false, false, true, true],
+    earned: 14040,
+    fav: false,
+    insuranceOpt: true,
+    videoIntro: true,
+  },
+  {
+    id: 6,
+    name: 'Fatima El-Amin',
+    sports: ['basketbal'],
+    rating: 4.5,
+    reviews: 29,
+    tarief: 32,
+    level: 'District',
+    km: 15,
+    city: 'Utrecht',
+    av: 'FA',
+    verified: true,
+    idVerified: true,
+    badges: ['Rising Star'],
+    bio: 'NBB referee. Strong communication. Available midweek and weekends.',
+    matches: 67,
+    resp: 92,
+    respTime: '< 2h',
+    langs: ['NL', 'AR', 'EN'],
+    avail: [true, false, true, true, true, false, true],
+    earned: 2144,
     fav: true,
     insuranceOpt: false,
     videoIntro: false,
