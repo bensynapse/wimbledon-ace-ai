@@ -3,6 +3,17 @@ import { allSports, demoDisputes, demoMsgs, demoRefs, earningsData, months, Refe
 import { ChatItem, ChatView } from './screens/Chat';
   const [chat, setChat] = useState<ChatItem | null>(null);
   const [subView, setSubView] = useState<string | null>(null);
+  const [postForm, setPostForm] = useState({
+    home: '',
+    away: '',
+    date: '',
+    time: '',
+    location: '',
+    mealIncluded: true,
+  });
+  const setPostValue = (key: keyof typeof postForm, value: string | boolean) => {
+    setPostForm((current) => ({ ...current, [key]: value }));
+  };
 import { Av, Bdg, Btn, Stars, StatCard } from './components';
 
 const MiniChart = ({ data, h = 60 }: { data: number[]; h?: number }) => {
@@ -369,12 +380,28 @@ export default function App() {
                   <Bdg
                     c={d.status === 'open' ? 'text-warning' : 'text-accent'}
                     bg={d.status === 'open' ? 'bg-warning/10' : 'bg-accent/10'}
-                  >
-                    {d.status}
-                  </Bdg>
-                </div>
-                <div className="mb-2 text-[11px] text-sec">{d.desc}</div>
-                <div className="mt-2 flex items-center justify-between border-t border-border pt-2">
+            <Inp label="Home Team *" value={postForm.home} onChange={(v) => setPostValue('home', v)} placeholder="e.g. SC Eibergen" icon="🏠" />
+            <Inp label="Away Team *" value={postForm.away} onChange={(v) => setPostValue('away', v)} placeholder="e.g. VV Rekken" icon="✈️" />
+              <Inp label="Date *" value={postForm.date} onChange={(v) => setPostValue('date', v)} placeholder="12-04-2026" icon="📅" />
+              <Inp label="Time *" value={postForm.time} onChange={(v) => setPostValue('time', v)} placeholder="14:30" icon="⏰" />
+            <Inp
+              label="Location / Venue *"
+              value={postForm.location}
+              onChange={(v) => setPostValue('location', v)}
+              placeholder="Sportpark address"
+              icon="📍"
+            />
+            <Toggle
+              on={postForm.mealIncluded}
+              onToggle={() => setPostValue('mealIncluded', !postForm.mealIncluded)}
+              label="Meal included"
+              sub="After the match at the club"
+            />
+                  if (!postForm.home || !postForm.away || !postForm.date || !postForm.time || !postForm.location) {
+                    showToast('Vul eerst alle verplichte velden in');
+                    return;
+                  }
+                  setPostForm({ home: '', away: '', date: '', time: '', location: '', mealIncluded: true });
                   <span className="text-[10px] text-dim">
                     📅 {d.date} • {d.type}
                   </span>
@@ -456,3 +483,6 @@ export default function App() {
           </div>
         )}
               setSubView(null);
+                    c={d.status === 'open' ? 'text-orange-400' : 'text-accent'}
+                    bg={d.status === 'open' ? 'bg-orange-400/10' : 'bg-accent/10'}
+                  <Bdg c={inv.status === 'paid' ? 'text-accent' : 'text-orange-400'} bg={inv.status === 'paid' ? 'bg-accent/10' : 'bg-orange-400/10'}>
