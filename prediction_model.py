@@ -519,6 +519,19 @@ class ValueBetAnalyzer:
         if not factors:
             factors.append("No standout factors - standard form-based prediction")
 
+        # WC-specific factors (WK bot)
+        if ctx.get("is_wc"):
+            if ctx.get("altitude_effect", 1.0) < 0.95:
+                factors.append("High altitude (e.g. Azteca): lower scoring, adaptation matters")
+            cf = ctx.get("crowd_factor", 1.0)
+            if cf > 1.02:
+                factors.append("Large crowd / partisan atmosphere may boost hosts")
+            ca = ctx.get("climate_adapt", 1.0)
+            if ca < 0.97:
+                factors.append("Team adaptation / travel factor is a negative for visitors")
+            if ctx.get("stage_importance", 1.0) > 1.1:
+                factors.append("Knockout pressure increases variance - value can hide in underdogs")
+
         return factors
 
     def _assess_risk(

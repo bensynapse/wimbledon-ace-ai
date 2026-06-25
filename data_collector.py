@@ -21,6 +21,46 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
+# WC specific config (graceful if not present)
+try:
+    from config import WC_LEAGUE_ID, WC_SEASON, VENUES_2026
+except Exception:
+    WC_LEAGUE_ID = 1
+    WC_SEASON = 2026
+    VENUES_2026 = {}
+
+# soccerdata primary (optional)
+try:
+    from scrapers import SoccerDataWrapper
+    HAS_SCRAPERS_SD = True
+except Exception:
+    HAS_SCRAPERS_SD = False
+    SoccerDataWrapper = None  # type: ignore
+
+# StatsBomb for detailed WC event data (optional, from analytics-handbook)
+try:
+    from scrapers import StatsBombWCImporter
+    HAS_STATSBOMB = True
+except Exception:
+    HAS_STATSBOMB = False
+    StatsBombWCImporter = None  # type: ignore
+
+# socceraction for VAEP / xT action valuation (optional)
+try:
+    from scrapers import SoccerActionProcessor
+    HAS_SOCCERACTION = True
+except Exception:
+    HAS_SOCCERACTION = False
+    SoccerActionProcessor = None  # type: ignore
+
+# roboflow/sports for CV tracking & physical metrics from video (optional)
+try:
+    from scrapers import RoboflowSportsAnalyzer
+    HAS_ROBOFLOW_SPORTS = True
+except Exception:
+    HAS_ROBOFLOW_SPORTS = False
+    RoboflowSportsAnalyzer = None  # type: ignore
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +155,16 @@ class MatchContext:
     home_xg_against: float = 0.0
     away_xg_for: float = 0.0
     away_xg_against: float = 0.0
+
+    # WC / Tournament specific (new for WK bot)
+    venue: Optional[str] = None
+    stage: str = "group"  # group, r32, r16, qf, sf, final
+    weather_summary: Optional[Dict] = None
+    expected_crowd: Optional[int] = None
+    crowd_factor: float = 1.0
+    travel_days: int = 0
+    climate_adapt_score: float = 1.0  # <1 = disadvantaged
+    is_national_team: bool = True
 
 
 # ============================================================
@@ -364,6 +414,62 @@ class APIFootballCollector:
             "xg_for": round(xg_for_total / n, 2),
             "xg_against": round(xg_against_total / n, 2)
         }
+
+    # ------ WORLD CUP 2026 SPECIFIC (league=1, season=2026) ------
+
+    def get_wc_teams(self) -> List[Dict]:
+        """Get all 48 national teams for WC."""
+        data = self._request("teams", {"league": WC_LEAGUE_ID, "season": WC_SEASON})
+        if not data or not data.get("response"):
+            return []
+        return [{"id": t["team"]["id"], "name": t["team"]["name"], "code": t["team"].get("code")}
+                for t in data["response"] if t.get("team")]
+
+    def get_wc_squads(self, team_id: Optional[int] = None) -> List[PlayerInfo]:
+        """Get current WC squads via players endpoint. Returns PlayerInfo list (basic)."""
+        params = {"league": WC_LEAGUE_ID, "season": WC_SEASON}
+        if team_id:
+            params["team"] = team_id
+        data = self._request("players", params)
+        if not data or not data.get("response"):
+            return []
+        players = []
+        for entry in data["response"]:
+            p = entry.get("player", {})
+            stats_list = entry.get("statistics", [{}])
+            stats = stats_list[0] if stats_list else {}
+            games = stats.get("games", {})
+            goals = stats.get("goals", {})
+            cards = stats.get("cards", {})
+            players.append(PlayerInfo(
+                name=p.get("name", "Unknown"),
+                position=games.get("position", "Unknown"),
+                team=stats.get("team", {}).get("name", "Unknown"),
+                is_available=True,
+                goals_season=goals.get("total") or 0,
+                assists_season=goals.get("assists") or 0,
+                yellow_cards_season=cards.get("yellow") or 0,
+                red_cards_season=cards.get("red") or 0,
+            ))
+        return players
+
+    def get_wc_fixtures(self, round_name: Optional[str] = None) -> List[Dict]:
+        params = {"league": WC_LEAGUE_ID, "season": WC_SEASON}
+        if round_name:
+            params["round"] = round_name
+        data = self._request("fixtures", params)
+        return data.get("response", []) if data else []
+
+    def enrich_wc_referee(self, ref_name: str) -> Optional[RefereeProfile]:
+        """Stub + basic profile. In prod: aggregate historical from int'l fixtures."""
+        if not ref_name:
+            return None
+        clean = ref_name.split(",")[0].strip()
+        return RefereeProfile(
+            name=clean,
+            avg_yellows_per_match=4.2,
+            card_strictness_score=0.55,
+        )
 
 
 # ============================================================
@@ -619,6 +725,36 @@ class MatchDataAggregator:
         self.odds = OddsCollector(odds_api_key) if odds_api_key else None
         self.news = NewsSentimentCollector(news_api_key) if news_api_key else None
         self.historical = HistoricalDataCollector()
+        # soccerdata as primary advanced stats source (for WC + club)
+        self.soccerdata = SoccerDataWrapper() if HAS_SCRAPERS_SD and SoccerDataWrapper else None
+        # StatsBomb event data for granular WC analysis (player actions, shots, etc.)
+        self.statsbomb = StatsBombWCImporter() if HAS_STATSBOMB and StatsBombWCImporter else None
+        # socceraction VAEP/xT for advanced action-value player/team features
+        self.socceraction = SoccerActionProcessor() if HAS_SOCCERACTION and SoccerActionProcessor else None
+        # roboflow/sports CV for tracking-derived workload, speed, formations (from video)
+        self.roboflow_sports = RoboflowSportsAnalyzer() if HAS_ROBOFLOW_SPORTS and RoboflowSportsAnalyzer else None
+        # All gap data loaders (injuries, set-pieces, sentiment, CLV, WC patterns)
+        self.injury_news = getattr(globals().get('scrapers', None), 'injury_news', None)
+        self.set_piece = getattr(globals().get('scrapers', None), 'set_piece', None)
+        self.sentiment = getattr(globals().get('scrapers', None), 'sentiment', None)
+        self.clv_tracker = getattr(globals().get('scrapers', None), 'clv_tracker', None)
+        self.wc_patterns = getattr(globals().get('scrapers', None), 'wc_patterns', None)
+        # Coach tactical + detailed historical WC (jfjelstul) + recent this-year data
+        self.coach = getattr(globals().get('scrapers', None), 'coach', None)
+        self.jfjelstul = getattr(globals().get('scrapers', None), 'jfjelstul', None)
+        if self.jfjelstul is None:
+            # direct instantiate if available
+            try:
+                from scrapers import JfjelstulWCImporter
+                self.jfjelstul = JfjelstulWCImporter()
+            except Exception:
+                self.jfjelstul = None
+        if self.coach is None:
+            try:
+                from scrapers import CoachTacticalLoader
+                self.coach = CoachTacticalLoader()
+            except Exception:
+                self.coach = None
 
     def build_match_context(
         self,
@@ -710,6 +846,182 @@ class MatchDataAggregator:
         if self.news:
             ctx.home_news_sentiment = self.news.get_team_sentiment(home_team)
             ctx.away_news_sentiment = self.news.get_team_sentiment(away_team)
+
+        # --- WC ENHANCEMENTS (if league indicates WC) ---
+        is_wc = (league_id == WC_LEAGUE_ID) or "world" in str(league_name).lower() or season == WC_SEASON
+        ctx.is_national_team = is_wc
+
+        if is_wc and self.api_football:
+            # Try to attach venue from fixture if not passed
+            if not ctx.venue:
+                fix_data = self.api_football._request("fixtures", {"id": fixture_id})
+                if fix_data and fix_data.get("response"):
+                    fx = fix_data["response"][0]
+                    ven = fx.get("fixture", {}).get("venue", {}) or {}
+                    ctx.venue = ven.get("name") or ven.get("city")
+
+            # Weather via config venue lookup (best effort)
+            if ctx.venue and VENUES_2026:
+                v = None
+                for k, vv in VENUES_2026.items():
+                    if ctx.venue and (k in ctx.venue.lower() or vv.get("city", "").lower() in ctx.venue.lower()):
+                        v = vv
+                        break
+                if v:
+                    ctx.weather_summary = {"altitude_m": v.get("alt_m"), "roof": v.get("roof_ac")}
+                    # simple crowd proxy
+                    ctx.expected_crowd = int(v.get("capacity", 50000) * 0.92)
+                    ctx.crowd_factor = 1.03 if v.get("capacity", 0) > 60000 else 1.0
+
+            # Enrich referee for WC refs
+            if ctx.referee:
+                ctx.referee = self.api_football.enrich_wc_referee(ctx.referee.name)
+
+            # Quick national squad refresh (key players)
+            try:
+                wc_home = self.api_football.get_wc_squads(home_team_id)
+                wc_away = self.api_football.get_wc_squads(away_team_id)
+                if wc_home:
+                    ctx.home_squad = self._build_squad_status(home_team, wc_home, [])
+                if wc_away:
+                    ctx.away_squad = self._build_squad_status(away_team, wc_away, [])
+            except Exception:
+                pass
+
+            # Crude adaptation / travel (can be refined)
+            ctx.travel_days = 4  # assume typical arrival
+            ctx.climate_adapt_score = 0.95 if "mexico" in str(ctx.venue or "").lower() else 1.0
+
+        # --- soccerdata enrichment (PRIMARY source for xG / per90 when available) ---
+        if self.soccerdata and getattr(self.soccerdata, "has_soccerdata", False):
+            try:
+                sd_league = "INT-World Cup" if is_wc or "world" in str(league_name).lower() else None
+                if sd_league:
+                    team_xg_df = self.soccerdata.get_fbref_team_xg(league=sd_league, season=str(season) if season else "2022")
+                    if not team_xg_df.empty and "team" in team_xg_df.columns:
+                        for side, team_name in [("home", home_team), ("away", away_team)]:
+                            mask = team_xg_df["team"].str.contains(team_name, case=False, na=False)
+                            if mask.any():
+                                row = team_xg_df[mask].iloc[0]
+                                # Map common FBref / xG cols
+                                xg_for = row.get("xG", row.get("Gls", 0)) or 0
+                                if side == "home":
+                                    if not ctx.home_xg_for:
+                                        ctx.home_xg_for = float(xg_for) / max(1, float(row.get("90s", 1)) or 1)
+                                else:
+                                    if not ctx.away_xg_for:
+                                        ctx.away_xg_for = float(xg_for) / max(1, float(row.get("90s", 1)) or 1)
+                    # player level sample (for future workload)
+                    pstats = self.soccerdata.get_fbref_player_stats(league=sd_league, season=str(season) if season else "2022")
+                    if not pstats.empty:
+                        ctx.__dict__.setdefault("sd_player_sample", pstats.head(5).to_dict("records"))
+
+                    # WhoScored etc. enrichment (detailed ratings, shots, possession, cards)
+                    try:
+                        ws_data = self.soccerdata.get_whoscored_data(league=sd_league, season=str(season) if season else "2022")
+                        if "error" not in ws_data:
+                            ctx.__dict__.setdefault("whoscored_schedule", ws_data.get("schedule"))
+                            pms = ws_data.get("player_match_stats")
+                            if isinstance(pms, pd.DataFrame) and not pms.empty:
+                                ctx.__dict__.setdefault("whoscored_player_sample", pms.head(8).to_dict("records"))
+                    except Exception:
+                        pass
+                    # Quick ESPN / FotMob presence note for "etc"
+                    for extra_src, method in [("espn", "get_espn_data"), ("fotmob", "get_fotmob_data")]:
+                        try:
+                            m = getattr(self.soccerdata, method, None)
+                            if m:
+                                res = m(league=sd_league, season=str(season) if season else "2022")
+                                if "error" not in res:
+                                    ctx.__dict__.setdefault(f"{extra_src}_available", True)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        # --- StatsBomb WC event enrichment (granular actions per analytics-handbook) ---
+        if getattr(self, "statsbomb", None) and getattr(self.statsbomb, "has_statsbomb", False) and is_wc:
+            try:
+                wc_matches = self.statsbomb.get_wc_matches()
+                if not wc_matches.empty:
+                    mask = (wc_matches.get("home_team", pd.Series()).str.contains(home_team, case=False, na=False) |
+                            wc_matches.get("away_team", pd.Series()).str.contains(home_team, case=False, na=False))
+                    if mask.any():
+                        sample_mid = int(wc_matches[mask].iloc[0]["match_id"])
+                        hfeats = self.statsbomb.extract_team_event_features(sample_mid, home_team)
+                        if hfeats:
+                            ctx.__dict__.setdefault("statsbomb_event_sample", hfeats)
+            except Exception:
+                pass
+
+        # --- socceraction VAEP / xT enrichment (action values for players) ---
+        if getattr(self, "socceraction", None) and getattr(self.socceraction, "has_socceraction", False) and is_wc:
+            try:
+                # Use sample events if available in context or via statsbomb
+                if ctx.home_squad or ctx.away_squad:
+                    # Placeholder: in full impl convert events -> rate actions -> aggregate per player
+                    ctx.__dict__.setdefault("vaep_note", "socceraction available for action valuation")
+            except Exception:
+                pass
+
+        # --- roboflow/sports CV tracking enrichment (physical/workload from video) ---
+        if getattr(self, "roboflow_sports", None) and getattr(self.roboflow_sports, "has_roboflow_sports", False) and is_wc:
+            try:
+                # If video available for match (highlights/broadcast), extract
+                # For now, structure for when video_path provided
+                if hasattr(ctx, "video_path") and ctx.video_path:
+                    track_feats = self.roboflow_sports.extract_tracking_features(ctx.video_path)
+                    ctx.__dict__.setdefault("tracking_workload", track_feats)
+            except Exception:
+                pass
+
+        # --- eddwebster/football_analytics inspired: squad valuation & player similarity (TM values, clustering ideas) ---
+        # Extend with real market value collection (Transfermarkt scrape or API-Football if available)
+        # Useful for WC squad depth ("value" of bench) and comparing players to historical similar ones.
+        if is_wc and (ctx.home_squad or ctx.away_squad):
+            ctx.__dict__.setdefault("squad_valuation_note", "integrate TM market values for squad strength")
+
+        # --- GRF RL sim enrichment (synthetic data / what-if from google-research/football) ---
+        # Generate synthetic match features or "RL-expected" outcomes for data augmentation,
+        # adaptation modeling (custom scenarios for heat/fatigue), or backtest validation.
+        if is_wc:
+            ctx.__dict__.setdefault("grf_sim_note", "use GoogleFootballSimulator for synthetic RL data")
+
+        # Apply all gap data for WC (injuries, setpieces, sentiment, CLV, patterns)
+        if is_wc:
+            if self.injury_news:
+                ctx.__dict__.setdefault("fresh_injuries", self.injury_news.get_fresh_injuries(home_team))
+            if self.set_piece:
+                ctx.__dict__.setdefault("setpiece_stats", self.set_piece.get_setpiece_stats())
+            if self.sentiment:
+                ctx.__dict__.setdefault("motivation_bias", self.sentiment.get_bias_score(home_team))
+            if self.clv_tracker:
+                ctx.__dict__.setdefault("clv_edge", self.clv_tracker.get_clv(0.65, 2.1))
+            if self.wc_patterns:
+                ctx.__dict__.setdefault("wc_historical", self.wc_patterns.get_wc_patterns(home_team))
+
+            # Coach / tactical style (trainer data - how they let the team play) - important for both sides
+            if getattr(self, "coach", None):
+                try:
+                    ctx.__dict__.setdefault("home_coach", self.coach.get_coach(home_team))
+                    ctx.__dict__.setdefault("away_coach", self.coach.get_coach(away_team))
+                    ctx.__dict__.setdefault("coach_matchup", self.coach.get_coach_matchup(home_team, away_team))
+                except Exception:
+                    pass
+
+            # Multi-year historical WC (jfjelstul best structured source) + recent this-year (qualifiers 2024-26 + prep)
+            if getattr(self, "jfjelstul", None):
+                try:
+                    ctx.__dict__.setdefault("home_wc_history", self.jfjelstul.get_multi_year_wc_stats(home_team))
+                    ctx.__dict__.setdefault("away_wc_history", self.jfjelstul.get_multi_year_wc_stats(away_team))
+                except Exception:
+                    pass
+            if getattr(self, "soccerdata", None):
+                try:
+                    ctx.__dict__.setdefault("home_recent_intl", self.soccerdata.get_recent_international_data(home_team))
+                    ctx.__dict__.setdefault("away_recent_intl", self.soccerdata.get_recent_international_data(away_team))
+                except Exception:
+                    pass
 
         return ctx
 

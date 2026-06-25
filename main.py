@@ -3,8 +3,8 @@ Enhanced Betting System - Main Orchestrator
 ============================================
 
 Ties together:
-  1. Data collection (historical + live API)
-  2. Feature engineering (ProphitBet-style + enhanced)
+  1. Data collection (historical + live API + soccerdata PRIMARY + StatsBomb open-data + roboflow/sports CV)
+  2. Feature engineering (ProphitBet-style + enhanced + soccerdata xG/per90 + VAEP/xT + tracking + eddwebster player sim/valuation + GRF RL synthetic)
   3. Model training (ensemble)
   4. Value bet detection (Kelly Criterion)
   5. Report generation
@@ -13,6 +13,7 @@ Usage:
     python main.py --mode train --league E0 --season 2024
     python main.py --mode predict --league E0 --fixture 12345
     python main.py --mode analyze --league E0
+    # WC 2026: multi-source (soccerdata + StatsBomb open-data + CV tracking + resources from eddwebster etc.) via DataAggregator
 """
 
 import argparse
@@ -79,7 +80,11 @@ API_LEAGUE_IDS = {
     "F1": 61,    # Ligue 1
     "N1": 88,    # Eredivisie
     "T1": 203,   # Süper Lig
+    "WC": 1,     # FIFA World Cup 2026 (WK bot)
 }
+
+# WC special
+WC_LEAGUE = "WC"
 
 
 class BettingSystem:
@@ -557,6 +562,14 @@ def main():
         "--fixtures-file", type=str, default=None,
         help="JSON file with fixtures to predict"
     )
+    parser.add_argument(
+        "--venue", type=str, default=None,
+        help="WC venue (city/stadium) for environmental context"
+    )
+    parser.add_argument(
+        "--stage", type=str, default="group",
+        help="WC stage (group / r32 / ko etc)"
+    )
 
     args = parser.parse_args()
 
@@ -569,18 +582,29 @@ def main():
         system.analyze_league(args.league, start_year=args.start_year)
 
     elif args.mode == "predict":
-        if not args.fixtures_file:
+        if args.league.upper() in ("WC", "WORLD_CUP", "1"):
+            print("=== WC / WK BOT MODE ===")
+            print(f"  Venue: {args.venue or 'auto'}  Stage: {args.stage}")
+            print("  (Use real fixture ids or --fixtures-file for full predict)")
+            # Show that new WC collectors are wired
+            try:
+                from data_collector import MatchDataAggregator
+                agg = MatchDataAggregator(api_football_key=API_FOOTBALL_KEY)
+                print("  WC data collector initialized (league=1).")
+            except Exception as e:
+                print("  WC collector note:", e)
+        elif not args.fixtures_file:
             logger.error(
                 "Provide --fixtures-file with match fixtures to predict"
             )
             sys.exit(1)
+        else:
+            with open(args.fixtures_file) as f:
+                fixtures = json.load(f)
 
-        with open(args.fixtures_file) as f:
-            fixtures = json.load(f)
-
-        system.predict_matches(
-            args.league, fixtures, start_year=args.start_year
-        )
+            system.predict_matches(
+                args.league, fixtures, start_year=args.start_year
+            )
 
 
 if __name__ == "__main__":

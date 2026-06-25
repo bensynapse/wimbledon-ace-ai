@@ -6,16 +6,25 @@ Core prediction model using Poisson distribution, ELO ratings, and multiple fact
 
 import math
 from scipy.stats import poisson
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import numpy as np
+import pandas as pd  # for team strength fitting
 
 from config import (
     POISSON_SETTINGS, ELO_SETTINGS, BANKROLL, VALUE_THRESHOLDS,
     MOTIVATION_FACTORS, CONGESTION_SETTINGS, WEATHER_IMPACT,
     REFEREE_SETTINGS, KEY_NUMBERS
 )
+
+# Optional: Soccermatics-style GLM (if statsmodels installed)
+try:
+    import statsmodels.api as sm
+    import statsmodels.formula.api as smf
+    HAS_STATSMODELS = True
+except ImportError:
+    HAS_STATSMODELS = False
 
 
 @dataclass
@@ -167,6 +176,103 @@ class PoissonModel:
                 away_prob = poisson.pmf(away_goals, away_xg)
                 matrix[(home_goals, away_goals)] = home_prob * away_prob
         
+        return matrix
+
+    def simulate_match(self, home_xg: float, away_xg: float) -> Dict[str, float]:
+        """
+        Soccermatics / Friends-of-Tracking inspired match simulator.
+        Returns full probability distribution and derived markets.
+        """
+        score_matrix = self.generate_score_matrix(home_xg, away_xg)
+        
+        # Win / Draw / Loss
+        home_win = sum(p for (h, a), p in score_matrix.items() if h > a)
+        draw = sum(p for (h, a), p in score_matrix.items() if h == a)
+        away_win = sum(p for (h, a), p in score_matrix.items() if h < a)
+        
+        # Over/Under 2.5
+        over_25 = sum(p for (h, a), p in score_matrix.items() if h + a > 2.5)
+        under_25 = 1 - over_25
+        
+        # BTTS
+        btts_yes = sum(p for (h, a), p in score_matrix.items() if h > 0 and a > 0)
+        btts_no = 1 - btts_yes
+        
+        # Most likely score
+        most_likely = max(score_matrix, key=score_matrix.get)
+        
+        return {
+            "home_win_prob": round(home_win, 4),
+            "draw_prob": round(draw, 4),
+            "away_win_prob": round(away_win, 4),
+            "over_2_5_prob": round(over_25, 4),
+            "under_2_5_prob": round(under_25, 4),
+            "btts_yes_prob": round(btts_yes, 4),
+            "btts_no_prob": round(btts_no, 4),
+            "most_likely_score": most_likely,
+            "most_likely_prob": round(score_matrix[most_likely], 4),
+            "expected_goals_home": round(home_xg, 3),
+            "expected_goals_away": round(away_xg, 3),
+        }
+
+    def fit_team_strength_poisson(self, matches_df: pd.DataFrame) -> Optional[Any]:
+        """
+        Fit a GLM Poisson model for team attack/defense strengths (Soccermatics style).
+        Expects columns: ['HomeTeam', 'AwayTeam', 'HomeGoals', 'AwayGoals'] or similar.
+        Returns fitted statsmodels GLM if available, else None.
+        This is great for national team or league strength ratings.
+        """
+        if not HAS_STATSMODELS:
+            return None
+        
+        if matches_df.empty:
+            return None
+            
+        # Standardize column names
+        df = matches_df.copy()
+        col_map = {
+            "HomeTeam": "home_team", "AwayTeam": "away_team",
+            "FTHG": "home_goals", "FTAG": "away_goals",
+            "HomeGoals": "home_goals", "AwayGoals": "away_goals"
+        }
+        df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+        
+        if not all(c in df.columns for c in ["home_team", "away_team", "home_goals", "away_goals"]):
+            return None
+        
+        # Prepare long format like in the Soccermatics script
+        goal_data = pd.concat([
+            df[["home_team", "away_team", "home_goals"]].assign(home=1)
+              .rename(columns={"home_team": "team", "away_team": "opponent", "home_goals": "goals"}),
+            df[["away_team", "home_team", "away_goals"]].assign(home=0)
+              .rename(columns={"away_team": "team", "home_team": "opponent", "away_goals": "goals"})
+        ])
+        
+        try:
+            model = smf.glm(
+                formula="goals ~ home + team + opponent",
+                data=goal_data,
+                family=sm.families.Poisson()
+            ).fit()
+            return model
+        except Exception:
+            return None
+
+    def predict_from_strength_model(self, model: Any, home_team: str, away_team: str) -> Tuple[float, float]:
+        """Predict expected goals using a fitted team strength GLM."""
+        if model is None or not HAS_STATSMODELS:
+            return 1.3, 1.1  # fallback
+        
+        try:
+            home_xg = model.predict(pd.DataFrame({
+                "team": [home_team], "opponent": [away_team], "home": [1]
+            })).values[0]
+            away_xg = model.predict(pd.DataFrame({
+                "team": [away_team], "opponent": [home_team], "home": [0]
+            })).values[0]
+            return float(home_xg), float(away_xg)
+        except Exception:
+            return 1.3, 1.1
         return matrix
     
     def calculate_probabilities(self, score_matrix: Dict[Tuple[int, int], float]) -> Dict:
