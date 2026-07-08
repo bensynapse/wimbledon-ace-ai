@@ -16,10 +16,13 @@ import requests
 
 from config import (
     API_KEYS,
+    DATA_SOURCE,
     DATA_SOURCES,
     PATHS,
     TOURS,
 )
+from data_sources.github_tennis import GitHubTennisSource
+from data_sources.kaggle_tennis import KaggleTennisSource
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +34,21 @@ EVENT_TYPE_KEYS = {
 
 
 class TennisAPIClient:
-    """Client for api-tennis.com."""
+    """Client for api-tennis.com — primary match & results data source."""
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = (api_key or API_KEYS.get("tennis_api") or "").strip()
-        if not self.api_key:
-            raise ValueError("TENNIS_API_KEY missing in config.py")
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
 
     def _get(self, params: Dict) -> Dict:
+        if not self.enabled:
+            raise ValueError(
+                "TENNIS_API_KEY missing — set in config.py or env. "
+                "Sign up at https://api-tennis.com/"
+            )
         payload = {"APIkey": self.api_key, **params}
         response = requests.get(TENNIS_API_BASE, params=payload, timeout=30)
         response.raise_for_status()
@@ -121,7 +131,15 @@ class HistoricalDataCollector:
     def __init__(self, data_dir: Optional[str] = None):
         self.data_dir = data_dir or PATHS["data_dir"]
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
-        self.client = TennisAPIClient()
+        self._client: Optional[TennisAPIClient] = None
+        self.github = GitHubTennisSource()
+        self.kaggle = KaggleTennisSource()
+
+    @property
+    def client(self) -> TennisAPIClient:
+        if self._client is None:
+            self._client = TennisAPIClient()
+        return self._client
 
     def _cache_path(self, tour: str) -> str:
         return f"{self.data_dir}{tour.lower()}_matches.parquet"
@@ -137,6 +155,46 @@ class HistoricalDataCollector:
         if cache.exists() and not refresh:
             logger.info("Loading cached data from %s", cache)
             return pd.read_parquet(cache)
+
+        if tour.lower() == "wta":
+            try:
+                df = self.kaggle.download_tour(tour, start_year, end_year, refresh)
+                df.to_parquet(cache, index=False)
+                return df
+            except Exception as exc:
+                logger.warning("Kaggle WTA source failed: %s", exc)
+
+        if DATA_SOURCE == "kaggle":
+            try:
+                df = self.kaggle.download_tour(tour, start_year, end_year, refresh)
+                df.to_parquet(cache, index=False)
+                return df
+            except Exception as exc:
+                logger.warning("Kaggle source failed: %s", exc)
+
+        if DATA_SOURCE == "github" or not self.client.enabled:
+            try:
+                df = self.github.download_tour(tour, start_year, end_year, refresh)
+                df.to_parquet(cache, index=False)
+                return df
+            except Exception as exc:
+                logger.warning("GitHub ATP source failed: %s", exc)
+                if cache.exists():
+                    return pd.read_parquet(cache)
+                if not self.client.enabled:
+                    raise ValueError(
+                        "GitHub download failed and no TENNIS_API_KEY set. "
+                        "For WTA: kaggle datasets download -d guillemservera/tennis"
+                    ) from exc
+
+        if not self.client.enabled:
+            if cache.exists():
+                logger.warning("No TENNIS_API_KEY — using cached data only")
+                return pd.read_parquet(cache)
+            raise ValueError(
+                "No cached data and TENNIS_API_KEY missing. "
+                "Use GitHub source (default) or set TENNIS_API_KEY"
+            )
 
         end_year = end_year or datetime.now().year
         frames: List[pd.DataFrame] = []
@@ -188,6 +246,7 @@ class HistoricalDataCollector:
             if fix.get("event_winner") not in ("First Player", "Second Player"):
                 continue
 
+            sets_p1, sets_p2, total_sets = _parse_set_score(fix)
             rows.append({
                 "match_id": str(fix.get("event_key", "")),
                 "date": fix.get("event_date"),
@@ -200,6 +259,10 @@ class HistoricalDataCollector:
                 "round": fix.get("tournament_round", ""),
                 "surface": _infer_surface(fix),
                 "tour": tour.lower(),
+                "sets_player1": sets_p1,
+                "sets_player2": sets_p2,
+                "total_sets": total_sets,
+                "minutes_played": total_sets * 52,
             })
 
         return pd.DataFrame(rows)
@@ -209,14 +272,34 @@ class LiveFixtureCollector:
     """Fetch upcoming/live fixtures and odds for predictions."""
 
     def __init__(self):
-        self.tennis = TennisAPIClient()
+        self._tennis: Optional[TennisAPIClient] = None
         self.odds_api = OddsAPIClient()
+        self.github = GitHubTennisSource()
+
+    @property
+    def tennis(self) -> TennisAPIClient:
+        if self._tennis is None:
+            self._tennis = TennisAPIClient()
+        return self._tennis
 
     def get_upcoming_fixtures(
         self,
         tour: str,
         days_ahead: int = 2,
     ) -> List[Dict]:
+        if self.odds_api.enabled:
+            fixtures = self._fixtures_from_odds_api(tour)
+            if fixtures:
+                logger.info("Loaded %d fixtures from The Odds API", len(fixtures))
+                return fixtures
+
+        if not self.tennis.enabled:
+            logger.warning(
+                "No ODDS_API_KEY or TENNIS_API_KEY — using demo fixtures. "
+                "Set ODDS_API_KEY for live upcoming matches."
+            )
+            return get_demo_fixtures(tour)
+
         today = date.today()
         stop = today + timedelta(days=days_ahead)
         fixtures = self.tennis.get_fixtures(
@@ -282,6 +365,76 @@ class LiveFixtureCollector:
                 "odds_player2": odds_p2,
             })
         return enriched
+
+    def get_standings(self, tour: str) -> List[Dict]:
+        if tour.lower() == "atp":
+            standings = self.github.get_standings(tour)
+            if standings:
+                return standings
+        if tour.lower() == "wta":
+            standings = self.kaggle.get_standings(tour)
+            if standings:
+                return standings
+        if self.tennis.enabled:
+            return self.tennis.get_standings(tour)
+        return []
+
+    def _fixtures_from_odds_api(self, tour: str) -> List[Dict]:
+        events = self.odds_api.get_match_odds(tour)
+        fixtures = []
+        for event in events:
+            commence = event.get("commence_time", "")
+            match_date = commence[:10] if commence else date.today().isoformat()
+            home = event.get("home_team", "").strip()
+            away = event.get("away_team", "").strip()
+            if not home or not away:
+                continue
+
+            odds_p1, odds_p2 = 0.0, 0.0
+            for bookmaker in event.get("bookmakers", []):
+                for market in bookmaker.get("markets", []):
+                    if market.get("key") != "h2h":
+                        continue
+                    for outcome in market.get("outcomes", []):
+                        try:
+                            price = float(outcome["price"])
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        if outcome.get("name") == home:
+                            odds_p1 = max(odds_p1, price)
+                        elif outcome.get("name") == away:
+                            odds_p2 = max(odds_p2, price)
+
+            fixtures.append({
+                "match_id": event.get("id", ""),
+                "date": match_date,
+                "time": commence[11:16] if len(commence) > 16 else "",
+                "player1": home,
+                "player2": away,
+                "tournament": _tournament_from_odds_event(event),
+                "round": "",
+                "surface": _surface_from_sport_key(tour, event),
+                "status": "Scheduled",
+                "odds_player1": odds_p1,
+                "odds_player2": odds_p2,
+            })
+        return fixtures
+
+
+def _tournament_from_odds_event(event: Dict) -> str:
+    sport_title = event.get("sport_title", "")
+    if "wimbledon" in sport_title.lower():
+        return "Wimbledon"
+    return sport_title or "ATP Tour"
+
+
+def _surface_from_sport_key(tour: str, event: Dict) -> str:
+    title = (event.get("sport_title", "") + event.get("home_team", "")).lower()
+    if "wimbledon" in title or "grass" in title:
+        return "grass"
+    if "roland" in title or "french" in title or "clay" in title:
+        return "clay"
+    return "hard"
 
 
 def _infer_surface(fixture: Dict) -> str:
@@ -367,3 +520,73 @@ def _match_odds_api_event(
         return best_away, best_home
 
     return 0.0, 0.0
+
+
+def _parse_set_score(fixture: Dict) -> Tuple[int, int, int]:
+    """Parse match set score from api-tennis fixture."""
+    result = fixture.get("event_final_result", "") or ""
+    parts = result.replace(" ", "").split("-")
+    if len(parts) == 2:
+        try:
+            s1, s2 = int(parts[0]), int(parts[1])
+            return s1, s2, s1 + s2
+        except ValueError:
+            pass
+
+    scores = fixture.get("scores") or []
+    if scores:
+        n = len(scores)
+        return n, n, n * 2 - 1
+
+    return 2, 1, 3
+
+
+def get_demo_fixtures(tour: str = "atp") -> List[Dict]:
+    """Offline demo fixtures when API keys are not configured."""
+    return [
+        {
+            "match_id": "demo_001",
+            "date": date.today().isoformat(),
+            "time": "14:00",
+            "player1": "Alex de Minaur",
+            "player2": "Flavio Cobolli",
+            "tournament": "Wimbledon",
+            "round": "Round of 16",
+            "surface": "grass",
+            "status": "Scheduled",
+            "odds_player1": 1.25,
+            "odds_player2": 4.10,
+            "surface_elo_diff": 120,
+            "player1_form": 0.72,
+            "player2_form": 0.55,
+            "player1_elo": 1980,
+            "player2_elo": 1860,
+            "player1_surface_elo": 1920,
+            "player2_surface_elo": 1800,
+            "player1_minutes_7d": 320,
+            "player2_minutes_7d": 580,
+            "player2_five_set_recent": True,
+            "player2_context_flags": ["fatigue_medium"],
+            "path_diff": "ADM had clean path; Cobolli faced heavier opposition",
+            "temperature_c": 24,
+        },
+        {
+            "match_id": "demo_002",
+            "date": date.today().isoformat(),
+            "time": "16:30",
+            "player1": "Taylor Fritz",
+            "player2": "Lorenzo Musetti",
+            "tournament": "Wimbledon",
+            "round": "Quarterfinal",
+            "surface": "grass",
+            "status": "Scheduled",
+            "odds_player1": 1.61,
+            "odds_player2": 2.45,
+            "surface_elo_diff": 80,
+            "player1_form": 0.68,
+            "player2_form": 0.62,
+            "player1_elo": 1950,
+            "player2_elo": 1870,
+            "temperature_c": 22,
+        },
+    ]

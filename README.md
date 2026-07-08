@@ -1,6 +1,6 @@
-# 🎾 WimbledonAce AI — Grand Slam Tennis Betting Predictor 2026
+# 🎾 WimbledonAce AI — Tennis Market Intelligence
 
-> **AI-powered ATP & WTA match predictions for Wimbledon, Roland Garros, US Open, Australian Open & every Grand Slam.**
+> **Detect mispriced tennis markets using Elo, surface data, contextual UE errors, fatigue, weather and odds movement.**
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![ML](https://img.shields.io/badge/ML-Ensemble-green.svg)]()
@@ -27,11 +27,38 @@
 pip install -r requirements.txt
 ```
 
-Add your API keys to `config.py` or as environment variables:
+### Recommended data stack
+
+| Source | Role | Cost |
+|--------|------|------|
+| [TML-Database (GitHub)](https://github.com/Tennismylife/TML-Database) | ATP matches, results, rankings, serve stats | **Free** |
+| [Match Charting Project](https://github.com/JeffSackmann/tennis_MatchChartingProject) | UE/winners FH/BH, rally profiles (jullie edge) | **Free** |
+| [The Odds API](https://the-odds-api.com/) | Upcoming fixtures + bookmaker odds | Free tier 500 req/mo |
+| [Open-Meteo](https://open-meteo.com/) | Weather (heat, wind) | Free |
+| [Kaggle guillemservera/tennis](https://www.kaggle.com/datasets/guillemservera/tennis) | **WTA** + ATP history | Free (API token) |
+| [api-tennis.com](https://api-tennis.com/) | Optional paid fallback | ~$15–30/mo |
+| Telegram Bot API | Daily alerts | Free |
+
+> De klassieke **Jeff Sackmann `tennis_atp`** repo is offline. **TML-Database** is de actieve opvolger met live updates tot 2026.
+
+Copy `.env.example` → `.env` and fill in keys:
 
 ```bash
-export TENNIS_API_KEY="your-api-tennis-key"
+cp .env.example .env
+# Live fixtures + odds:
 export ODDS_API_KEY="your-odds-api-key"
+
+# WTA data (eenmalig):
+pip install kaggle
+# Kaggle → Account → API Token → ~/.kaggle/kaggle.json
+bash scripts/download_kaggle.sh
+# of: python3 cli.py update --kaggle --all
+```
+
+Check configuration:
+
+```bash
+python main.py --mode status
 ```
 
 ### Train the model
@@ -40,7 +67,28 @@ export ODDS_API_KEY="your-odds-api-key"
 python main.py --mode train --tour atp --start-year 2022
 ```
 
-### Predict today's matches (Wimbledon season!)
+### Scan for value (with demo data, no API keys)
+
+```bash
+python main.py --mode scan-value --demo --full
+```
+
+### Daily pipeline (scan + report + Telegram)
+
+```bash
+python main.py --mode daily --tour atp
+```
+
+### Full intelligence report (ADM vs Cobolli example)
+
+```bash
+python main.py --mode intelligence \
+  --player1 "Alex de Minaur" --player2 "Flavio Cobolli" \
+  --surface grass --odds-p1 1.25 --odds-p2 4.10 --model-prob-p1 0.66 \
+  --context-file data/examples/cobolli_adm_wimbledon.json
+```
+
+### Predict today's matches
 
 ```bash
 python main.py --mode predict --tour atp --today

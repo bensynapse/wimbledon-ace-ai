@@ -1,25 +1,23 @@
-# 🎾 Tennis-Bet V3 - Volledige Analyse Tool
+# WimbledonAce AI — Market Intelligence
 
 ## Wat dit is
-Volledige replicatie van BSP methode + onze V3 upgrades (Elo surface, Monte Carlo, UE/fatigue tracker, value detection, live hedge).
+Tennis wedstrijd-analyse met Elo, UE/charting, weer, perscitaten, vermoeidheid en value detection — geen black-box odds, alles rule-based + model.
 
-## Hoe te gebruiken
-
-### 1. CLI
+## CLI
 ```bash
-python tennis_v3/cli.py analyze --p1 "Taylor Fritz" --p2 "Alexander Zverev" --odds1 1.90 --odds2 1.90
+python cli.py intelligence --player1 "Arthur Fery" --player2 "Alexander Zverev" \
+  --surface grass --tournament Wimbledon --odds-p1 5.50 --odds-p2 1.14 \
+  --context-file ctx.json
 ```
 
-### 2. xlsx
-Genereert `Tennis_Analysis_V3.xlsx` met alle tabs.
-
-### 3. X post
-`--post-x` flag maakt thread met analyse.
+Context JSON voor wedstrijddag-weer:
+```json
+{"match_date": "2026-07-10", "match_hour": 15}
+```
 
 ## Structuur
-- `tennis_v3/` - core code
-- `data/` - screenshots & images
-- `PLAN.md` - dagelijkse workflow
-- `BACKTEST.md` - resultaten
-
-**We gaan dit nu vullen.**
+- `cli.py` — hoofd-CLI
+- `intelligence/` — UE, fatigue, rapporten
+- `data_sources/` — weer, charting, quotes, Tennis Abstract Elo
+- `pipelines/` — context builder, daily scan, backtest
+- `models/` — probability model, eigen Elo tracker

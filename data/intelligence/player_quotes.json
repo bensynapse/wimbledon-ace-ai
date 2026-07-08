@@ -1,0 +1,98 @@
+[
+  {
+    "player": "Arthur Fery",
+    "tournament": "Wimbledon",
+    "date": "2026-07-08",
+    "round": "QF",
+    "opponent": "Flavio Cobolli",
+    "source": "BBC Sport",
+    "reporter_question": "How are you feeling after beating a top-20 player on Centre Court?",
+    "quote": "I've never felt emotions like this before. I just want to keep doing the same thing — stay composed and trust my game.",
+    "signals": ["emotional_high", "composed", "momentum"],
+    "stats_note": "27 winners / 15 UE vs Cobolli 41 UE"
+  },
+  {
+    "player": "Arthur Fery",
+    "tournament": "Wimbledon",
+    "date": "2026-07-08",
+    "round": "QF",
+    "opponent": "Flavio Cobolli",
+    "source": "BBC Sport",
+    "reporter_question": "Were you nervous walking out for the quarter-final?",
+    "quote": "Of course I was nervous, but once the match started I felt calm. The crowd helped me settle.",
+    "signals": ["pressure_coping", "home_crowd_boost"],
+    "stats_note": null
+  },
+  {
+    "player": "Alexander Zverev",
+    "tournament": "Wimbledon",
+    "date": "2026-07-08",
+    "round": "QF",
+    "opponent": "Taylor Fritz",
+    "source": "BBC Sport",
+    "reporter_question": "How would you rate your performance today?",
+    "quote": "It was almost a perfect match. I served well, stayed aggressive, and trusted myself from the first point.",
+    "signals": ["confidence_high", "serving_well"],
+    "stats_note": "14 aces in straight sets"
+  },
+  {
+    "player": "Alexander Zverev",
+    "tournament": "Wimbledon",
+    "date": "2026-07-08",
+    "round": "QF",
+    "opponent": "Taylor Fritz",
+    "source": "BBC Sport",
+    "reporter_question": "Arthur Fery will have the Centre Court crowd on Friday — does that bother you?",
+    "quote": "Not at all. I've played big matches with crowds against me. I focus on my tennis, not the noise.",
+    "signals": ["experience", "crowd_neutral"],
+    "stats_note": null
+  },
+  {
+    "player": "Novak Djokovic",
+    "tournament": "Wimbledon",
+    "date": "2026-07-08",
+    "round": "QF",
+    "opponent": "Felix Auger-Aliassime",
+    "source": "BBC Sport",
+    "reporter_question": "Five hours and fifteen minutes — how do you feel physically?",
+    "quote": "It was the longest match of the tournament for me. I had a small calf issue in the first set but I won with my racquet and my heart.",
+    "signals": ["fatigue_high", "injury_minor", "mental_toughness"],
+    "stats_note": "5h15 QF — 2 days rest before SF"
+  },
+  {
+    "player": "Novak Djokovic",
+    "tournament": "Wimbledon",
+    "date": "2026-07-08",
+    "round": "QF",
+    "opponent": "Felix Auger-Aliassime",
+    "source": "BBC Sport",
+    "reporter_question": "Can you recover in time for the semi-final?",
+    "quote": "I have two days to recover. I've been in this situation many times at Wimbledon. The body knows what to do.",
+    "signals": ["recovery_confident", "experience"],
+    "stats_note": null
+  },
+  {
+    "player": "Taylor Fritz",
+    "tournament": "Wimbledon",
+    "date": "2026-07-08",
+    "round": "QF",
+    "opponent": "Alexander Zverev",
+    "source": "BBC Sport",
+    "reporter_question": "What went wrong today against Zverev?",
+    "quote": "I wasn't fully there mentally. The knee was bothering me and I couldn't find my rhythm on serve.",
+    "signals": ["injury_context", "opponent_form"],
+    "stats_note": "Context for Zverev dominance — not Zverev quote"
+  },
+  {
+    "player": "Jannik Sinner",
+    "tournament": "Wimbledon",
+    "date": "2026-07-07",
+    "round": "QF",
+    "opponent": "Ben Shelton",
+    "source": "BBC Sport",
+    "reporter_question": "Another straight-sets win — how is your level right now?",
+    "quote": "I'm feeling good. I'm moving well and not giving away cheap points. That's the plan for the semis.",
+    "signals": ["confidence_high", "low_ue_mindset", "fresh"],
+    "stats_note": "0 sets lost in tournament"
+  }
+]

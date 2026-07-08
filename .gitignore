@@ -26,8 +26,14 @@ ENV/
 env/
 .venv/
 
+# Secrets
+.env
+
 # Data and models (generated)
 data/
+!data/examples/
+!data/intelligence/
+!data/charting/manual_overrides.csv
 output/
 *.pkl
 *.joblib
