@@ -1,19 +1,6 @@
+# WimbledonAce AI — Grand Slam Tennis Betting Predictor 2026
 numpy>=1.24.0
 pandas>=2.0.0
 scikit-learn>=1.3.0
-scipy>=1.11.0
 requests>=2.31.0
-xgboost>=2.0.0
-optuna>=3.4.0
-imbalanced-learn>=0.11.0
-soccerdata>=1.8.0
-# Optional but recommended for detailed event data (StatsBomb Open Data for WC 2022+)
-# statsbombpy
-# Clone https://github.com/statsbomb/open-data for full historical WC JSON + 360 data (offline preferred)
-# eddwebster/football_analytics as resources guide (notebooks for xG/VAEP/similarity/TM valuations) - no new dep, ideas only
-# google-research/football (gfootball) for RL-based simulation, synthetic data generation, multi-agent tactics modeling (optional for advanced sims/augmentation)
-# mplsoccer  # for pitch visualizations if adding reports/demos
-# kloppy     # for normalizing event data from multiple providers
-# statsmodels  # for advanced GLM Poisson models (Soccermatics style team strengths)
-# socceraction  # for SPADL, VAEP, xT action valuation from event data (ML-KULeuven) - great for player impact features
-# roboflow/sports (git) + supervision + ultralytics  # CV for player/ball/pitch tracking, radar, team classification from video - for physical metrics (distance, speed, workload)
+pyarrow>=14.0.0

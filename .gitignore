@@ -28,9 +28,7 @@ env/
 
 # Data and models (generated)
 data/
-models/
 output/
-downloaded_files/
 *.pkl
 *.joblib
 *.h5

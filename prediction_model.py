@@ -1,97 +1,58 @@
 """
-Enhanced Prediction Model Module
-Ensemble of multiple classifiers with value bet detection.
-
-Models included:
-  - XGBoost (gradient boosting)
-  - Random Forest
-  - Logistic Regression (calibrated probabilities)
-  - Neural Network (optional)
-
-Inspired by ProphitBet's multi-model approach but with:
-  - Ensemble averaging for more robust predictions
-  - Proper probability calibration
-  - Value bet detection with Kelly Criterion
-  - Confidence scoring
+WimbledonAce AI — Prediction Engine
+Ensemble ML classifier with Kelly Criterion value bet detection.
 """
 
-import numpy as np
-import pandas as pd
-import pickle
-import json
 import logging
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+import pickle
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
+import numpy as np
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import (
-    RandomForestClassifier,
     GradientBoostingClassifier,
-    VotingClassifier
+    RandomForestClassifier,
+    VotingClassifier,
 )
 from sklearn.linear_model import LogisticRegression
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import StratifiedKFold, cross_val_score
-from sklearn.metrics import (
-    accuracy_score, f1_score, classification_report,
-    log_loss, brier_score_loss
-)
+from sklearn.preprocessing import StandardScaler
 
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
-# BET RECOMMENDATION
-# ============================================================
-
 @dataclass
 class BetRecommendation:
-    """Complete bet recommendation with reasoning."""
+    """Complete bet recommendation for a tennis match."""
     match: str
     date: str
-    league: str
-    # Probabilities
-    prob_home: float
-    prob_draw: float
-    prob_away: float
-    prob_over25: float
-    prob_btts: float
-    # Odds
-    odds_home: float
-    odds_draw: float
-    odds_away: float
-    odds_over25: float
-    odds_under25: float
-    # Value analysis
-    value_home: float  # edge = prob * odds - 1
-    value_draw: float
-    value_away: float
-    value_over25: float
-    # Best bet
+    tournament: str
+    surface: str
+    player1: str
+    player2: str
+    prob_player1: float
+    prob_player2: float
+    odds_player1: float
+    odds_player2: float
+    value_player1: float
+    value_player2: float
     best_bet: str
     best_value: float
-    confidence: float  # 0-1 model confidence
+    confidence: float
     kelly_stake_pct: float
-    # Context
     key_factors: List[str]
-    risk_level: str  # "low", "medium", "high"
+    risk_level: str
 
-
-# ============================================================
-# ENSEMBLE PREDICTOR
-# ============================================================
 
 class EnsemblePredictor:
-    """
-    Ensemble model combining multiple classifiers.
-    Uses soft voting with calibrated probabilities.
-    """
+    """Binary ensemble: predicts probability that player1 wins."""
 
     def __init__(self, model_dir: str = "models/"):
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
-
         self.scaler = StandardScaler()
         self.models: Dict[str, Any] = {}
         self.ensemble = None
@@ -100,15 +61,14 @@ class EnsemblePredictor:
         self.feature_importances: Dict[str, float] = {}
 
     def build_models(self) -> Dict[str, Any]:
-        """Build the individual classifiers."""
         models = {
-            "xgboost": GradientBoostingClassifier(
+            "gradient_boost": GradientBoostingClassifier(
                 n_estimators=300,
-                max_depth=5,
+                max_depth=4,
                 learning_rate=0.05,
                 subsample=0.8,
                 min_samples_leaf=10,
-                random_state=42
+                random_state=42,
             ),
             "random_forest": RandomForestClassifier(
                 n_estimators=300,
@@ -116,15 +76,14 @@ class EnsemblePredictor:
                 min_samples_leaf=5,
                 class_weight="balanced",
                 random_state=42,
-                n_jobs=-1
+                n_jobs=-1,
             ),
             "logistic": LogisticRegression(
                 C=1.0,
                 max_iter=1000,
-                multi_class="multinomial",
                 class_weight="balanced",
-                random_state=42
-            )
+                random_state=42,
+            ),
         }
         self.models = models
         return models
@@ -135,44 +94,24 @@ class EnsemblePredictor:
         y: np.ndarray,
         feature_names: Optional[List[str]] = None,
         cv_folds: int = 5,
-        calibrate: bool = True
+        calibrate: bool = True,
     ) -> Dict[str, Any]:
-        """
-        Train the ensemble with cross-validation evaluation.
-
-        Returns dict with per-model and ensemble metrics.
-        """
-        self.feature_names = feature_names or [
-            f"f_{i}" for i in range(X.shape[1])
-        ]
-
-        # Scale features
+        self.feature_names = feature_names or [f"f_{i}" for i in range(X.shape[1])]
         X_scaled = self.scaler.fit_transform(X)
-
-        # Build models
         self.build_models()
 
-        # Train and evaluate each model
         results = {}
         cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
-
         trained_models = {}
+
         for name, model in self.models.items():
-            logger.info(f"Training {name}...")
-
-            # Cross-validation scores
-            cv_scores = cross_val_score(
-                model, X_scaled, y, cv=cv, scoring="accuracy"
-            )
-
-            # Fit on full data
+            logger.info("Training %s...", name)
+            cv_scores = cross_val_score(model, X_scaled, y, cv=cv, scoring="accuracy")
             model.fit(X_scaled, y)
 
-            # Calibrate probabilities
             if calibrate:
                 cal_model = CalibratedClassifierCV(
-                    estimator=model, method="isotonic",
-                    cv=cv_folds
+                    estimator=model, method="isotonic", cv=cv_folds
                 )
                 cal_model.fit(X_scaled, y)
                 trained_models[name] = cal_model
@@ -182,150 +121,110 @@ class EnsemblePredictor:
             results[name] = {
                 "cv_accuracy_mean": round(cv_scores.mean(), 4),
                 "cv_accuracy_std": round(cv_scores.std(), 4),
-                "train_accuracy": round(
-                    accuracy_score(y, model.predict(X_scaled)), 4
-                )
+                "train_accuracy": round(accuracy_score(y, model.predict(X_scaled)), 4),
             }
-            logger.info(
-                f"  {name}: CV={cv_scores.mean():.4f} ± {cv_scores.std():.4f}"
-            )
 
-        # Build ensemble (soft voting)
         self.ensemble = VotingClassifier(
             estimators=list(trained_models.items()),
-            voting="soft"
+            voting="soft",
         )
-        # VotingClassifier needs to be fit, but our sub-models are already fit
-        # So we manually set estimators
         self.ensemble.estimators_ = list(trained_models.values())
-        self.ensemble.le_ = self.ensemble.estimators_[0].classes_ if hasattr(
-            self.ensemble.estimators_[0], 'classes_') else np.unique(y)
+        self.ensemble.le_ = (
+            self.ensemble.estimators_[0].classes_
+            if hasattr(self.ensemble.estimators_[0], "classes_")
+            else np.unique(y)
+        )
 
-        # Ensemble CV score
         ensemble_preds = self.predict_proba(X)
-        ensemble_pred_classes = np.argmax(ensemble_preds, axis=1)
+        ensemble_pred_classes = (ensemble_preds >= 0.5).astype(int)
         results["ensemble"] = {
-            "train_accuracy": round(
-                accuracy_score(y, ensemble_pred_classes), 4
-            ),
+            "train_accuracy": round(accuracy_score(y, ensemble_pred_classes), 4),
             "classification_report": classification_report(
                 y, ensemble_pred_classes, output_dict=True
-            )
+            ),
         }
 
-        # Feature importances (from tree-based models)
         self._compute_feature_importances()
-
         self.is_trained = True
         self.models = trained_models
         return results
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
-        """
-        Predict class probabilities using ensemble averaging.
-        Returns array of shape (n_samples, 3) for [Home, Draw, Away].
-        """
+        """Return P(player1 wins) for each row."""
         if not self.is_trained:
             raise RuntimeError("Model not trained yet.")
 
         X_scaled = self.scaler.transform(X)
-
-        # Average probabilities across models
         all_probs = []
         for name, model in self.models.items():
             try:
                 probs = model.predict_proba(X_scaled)
-                all_probs.append(probs)
-            except Exception as e:
-                logger.warning(f"Model {name} prediction failed: {e}")
+                p1 = probs[:, 1] if probs.shape[1] == 2 else probs[:, 0]
+                all_probs.append(p1)
+            except Exception as exc:
+                logger.warning("Model %s prediction failed: %s", name, exc)
 
         if not all_probs:
             raise RuntimeError("All models failed to predict.")
 
-        # Weighted average (can be customized based on CV performance)
-        avg_probs = np.mean(all_probs, axis=0)
-
-        # Normalize to sum to 1
-        row_sums = avg_probs.sum(axis=1, keepdims=True)
-        avg_probs = avg_probs / row_sums
-
-        return avg_probs
+        return np.clip(np.mean(all_probs, axis=0), 0.01, 0.99)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
-        """Predict class labels."""
-        probs = self.predict_proba(X)
-        return np.argmax(probs, axis=1)
+        return (self.predict_proba(X) >= 0.5).astype(int)
 
     def _compute_feature_importances(self):
-        """Extract and average feature importances from tree models."""
         importances = np.zeros(len(self.feature_names))
         count = 0
-
-        for name, model in self.models.items():
-            base = model
-            # Unwrap CalibratedClassifierCV if needed
-            if hasattr(model, 'estimator'):
-                base = model.estimator
-            if hasattr(base, 'feature_importances_'):
+        for model in self.models.values():
+            base = model.estimator if hasattr(model, "estimator") else model
+            if hasattr(base, "feature_importances_"):
                 importances += base.feature_importances_
                 count += 1
 
-        if count > 0:
+        if count:
             importances /= count
             self.feature_importances = dict(
-                zip(self.feature_names, importances)
-            )
-            # Sort by importance
-            self.feature_importances = dict(
-                sorted(self.feature_importances.items(),
-                       key=lambda x: x[1], reverse=True)
+                sorted(
+                    zip(self.feature_names, importances),
+                    key=lambda item: item[1],
+                    reverse=True,
+                )
             )
 
-    def save(self, filename: str = "ensemble_model"):
-        """Save model to disk."""
+    def save(self, filename: str = "wimbledon_ace_model"):
         path = self.model_dir / f"{filename}.pkl"
         state = {
             "scaler": self.scaler,
             "models": self.models,
             "feature_names": self.feature_names,
             "feature_importances": self.feature_importances,
-            "is_trained": self.is_trained
+            "is_trained": self.is_trained,
         }
-        with open(path, "wb") as f:
-            pickle.dump(state, f)
-        logger.info(f"Model saved to {path}")
+        with open(path, "wb") as handle:
+            pickle.dump(state, handle)
+        logger.info("Model saved to %s", path)
 
-    def load(self, filename: str = "ensemble_model"):
-        """Load model from disk."""
+    def load(self, filename: str = "wimbledon_ace_model"):
         path = self.model_dir / f"{filename}.pkl"
-        with open(path, "rb") as f:
-            state = pickle.load(f)
+        with open(path, "rb") as handle:
+            state = pickle.load(handle)
         self.scaler = state["scaler"]
         self.models = state["models"]
         self.feature_names = state["feature_names"]
         self.feature_importances = state["feature_importances"]
         self.is_trained = state["is_trained"]
-        logger.info(f"Model loaded from {path}")
+        logger.info("Model loaded from %s", path)
 
-
-# ============================================================
-# VALUE BET ANALYZER
-# ============================================================
 
 class ValueBetAnalyzer:
-    """
-    Detects value bets by comparing model probabilities to
-    bookmaker odds-implied probabilities.
-
-    Uses Kelly Criterion for optimal stake sizing.
-    """
+    """Compare model probabilities to bookmaker odds."""
 
     def __init__(
         self,
         min_value_threshold: float = 0.05,
         kelly_fraction: float = 0.25,
         confidence_threshold: float = 0.55,
-        bankroll: float = 1000.0
+        bankroll: float = 1000.0,
     ):
         self.min_value = min_value_threshold
         self.kelly_frac = kelly_fraction
@@ -334,253 +233,148 @@ class ValueBetAnalyzer:
 
     def analyze_match(
         self,
-        model_probs: np.ndarray,
+        prob_player1: float,
         odds: Dict[str, float],
         match_info: Dict[str, str],
-        context_features: Dict[str, float] = None,
-        poisson_probs: Dict[str, float] = None
+        context_features: Optional[Dict[str, float]] = None,
     ) -> BetRecommendation:
-        """
-        Analyze a single match for value betting opportunities.
+        prob_p1 = float(prob_player1)
+        prob_p2 = 1.0 - prob_p1
 
-        Parameters:
-            model_probs: [prob_home, prob_draw, prob_away]
-            odds: {"home": x, "draw": x, "away": x, "over25": x, "under25": x}
-            match_info: {"match": str, "date": str, "league": str}
-            context_features: dict from feature engineering
-            poisson_probs: dict from Poisson model
-        """
-        prob_h, prob_d, prob_a = model_probs
+        odds_p1 = odds.get("player1", 0.0)
+        odds_p2 = odds.get("player2", 0.0)
 
-        # Combine with Poisson if available (weighted blend)
-        if poisson_probs:
-            poisson_weight = 0.3  # 30% Poisson, 70% ML
-            prob_h = (1 - poisson_weight) * prob_h + poisson_weight * poisson_probs.get("poisson_home_win", prob_h)
-            prob_d = (1 - poisson_weight) * prob_d + poisson_weight * poisson_probs.get("poisson_draw", prob_d)
-            prob_a = (1 - poisson_weight) * prob_a + poisson_weight * poisson_probs.get("poisson_away_win", prob_a)
+        value_p1 = (prob_p1 * odds_p1 - 1) if odds_p1 > 0 else -1
+        value_p2 = (prob_p2 * odds_p2 - 1) if odds_p2 > 0 else -1
 
-            # Renormalize
-            total = prob_h + prob_d + prob_a
-            prob_h, prob_d, prob_a = prob_h/total, prob_d/total, prob_a/total
-
-        # Value = (probability * odds) - 1
-        odds_h = odds.get("home", 0)
-        odds_d = odds.get("draw", 0)
-        odds_a = odds.get("away", 0)
-        odds_o25 = odds.get("over25", 0)
-        odds_u25 = odds.get("under25", 0)
-
-        value_h = (prob_h * odds_h - 1) if odds_h > 0 else -1
-        value_d = (prob_d * odds_d - 1) if odds_d > 0 else -1
-        value_a = (prob_a * odds_a - 1) if odds_a > 0 else -1
-
-        # Over 2.5 value (from Poisson if available)
-        prob_o25 = poisson_probs.get("poisson_over25", 0.5) if poisson_probs else 0.5
-        prob_btts = poisson_probs.get("poisson_btts", 0.5) if poisson_probs else 0.5
-        value_o25 = (prob_o25 * odds_o25 - 1) if odds_o25 > 0 else -1
-
-        # Find best value bet
         values = {
-            "Home Win": (value_h, prob_h, odds_h),
-            "Draw": (value_d, prob_d, odds_d),
-            "Away Win": (value_a, prob_a, odds_a),
-            "Over 2.5": (value_o25, prob_o25, odds_o25),
+            f"{match_info.get('player1', 'Player 1')} ML": (value_p1, prob_p1, odds_p1),
+            f"{match_info.get('player2', 'Player 2')} ML": (value_p2, prob_p2, odds_p2),
         }
-
-        best_bet = max(values, key=lambda k: values[k][0])
-        best_value, best_prob, best_odds = values[best_bet]
-
-        # Kelly Criterion stake
-        kelly = self._kelly_criterion(best_prob, best_odds)
-
-        # Confidence = max probability (higher = more certain)
-        confidence = max(prob_h, prob_d, prob_a)
-
-        # Key factors analysis
-        key_factors = self._analyze_key_factors(
-            context_features or {}, model_probs, odds
+        best_bet, (best_value, best_prob, best_odds) = max(
+            values.items(), key=lambda item: item[1][0]
         )
 
-        # Risk level
+        kelly = self._kelly_criterion(best_prob, best_odds)
+        confidence = max(prob_p1, prob_p2)
+        key_factors = self._analyze_key_factors(
+            context_features or {},
+            prob_p1,
+            odds,
+            match_info,
+        )
         risk = self._assess_risk(confidence, best_value, context_features or {})
 
         return BetRecommendation(
             match=match_info.get("match", "Unknown"),
             date=match_info.get("date", ""),
-            league=match_info.get("league", ""),
-            prob_home=round(prob_h, 4),
-            prob_draw=round(prob_d, 4),
-            prob_away=round(prob_a, 4),
-            prob_over25=round(prob_o25, 4),
-            prob_btts=round(prob_btts, 4),
-            odds_home=odds_h,
-            odds_draw=odds_d,
-            odds_away=odds_a,
-            odds_over25=odds_o25,
-            odds_under25=odds_u25,
-            value_home=round(value_h, 4),
-            value_draw=round(value_d, 4),
-            value_away=round(value_a, 4),
-            value_over25=round(value_o25, 4),
+            tournament=match_info.get("tournament", ""),
+            surface=match_info.get("surface", ""),
+            player1=match_info.get("player1", ""),
+            player2=match_info.get("player2", ""),
+            prob_player1=round(prob_p1, 4),
+            prob_player2=round(prob_p2, 4),
+            odds_player1=odds_p1,
+            odds_player2=odds_p2,
+            value_player1=round(value_p1, 4),
+            value_player2=round(value_p2, 4),
             best_bet=best_bet,
             best_value=round(best_value, 4),
             confidence=round(confidence, 4),
             kelly_stake_pct=round(kelly, 4),
             key_factors=key_factors,
-            risk_level=risk
+            risk_level=risk,
         )
 
     def _kelly_criterion(self, prob: float, odds: float) -> float:
-        """
-        Fractional Kelly Criterion.
-        Returns recommended stake as % of bankroll.
-        """
         if odds <= 1 or prob <= 0:
             return 0.0
-
-        b = odds - 1  # Net odds
-        q = 1 - prob  # Probability of losing
-
-        kelly = (b * prob - q) / b
-
-        # Apply fraction and cap
-        kelly = max(0, kelly * self.kelly_frac)
-        kelly = min(kelly, 0.10)  # Never more than 10% of bankroll
-
-        return kelly
+        b = odds - 1
+        q = 1 - prob
+        kelly = max(0.0, (b * prob - q) / b)
+        return min(kelly * self.kelly_frac, 0.10)
 
     def _analyze_key_factors(
         self,
         ctx: Dict[str, float],
-        probs: np.ndarray,
-        odds: Dict[str, float]
+        prob_p1: float,
+        odds: Dict[str, float],
+        match_info: Dict[str, str],
     ) -> List[str]:
-        """Generate human-readable key factors for the bet."""
         factors = []
+        p1 = match_info.get("player1", "Player 1")
+        p2 = match_info.get("player2", "Player 2")
 
-        # Squad strength
-        strength_diff = ctx.get("squad_strength_diff", 0)
-        if abs(strength_diff) > 0.1:
-            stronger = "Home" if strength_diff > 0 else "Away"
-            factors.append(
-                f"{stronger} team has stronger available squad "
-                f"(diff: {strength_diff:+.2f})"
-            )
+        elo_diff = ctx.get("elo_diff", 0.0)
+        if abs(elo_diff) > 50:
+            fav = p1 if elo_diff > 0 else p2
+            factors.append(f"{fav} has Elo edge ({elo_diff:+.0f})")
 
-        # Missing key players
-        h_missing = ctx.get("home_missing_key_count", 0)
-        a_missing = ctx.get("away_missing_key_count", 0)
-        if h_missing > 0:
-            factors.append(f"Home missing {int(h_missing)} key player(s)")
-        if a_missing > 0:
-            factors.append(f"Away missing {int(a_missing)} key player(s)")
+        surface_diff = ctx.get("surface_elo_diff", 0.0)
+        surface = match_info.get("surface", "")
+        if abs(surface_diff) > 40 and surface:
+            fav = p1 if surface_diff > 0 else p2
+            factors.append(f"{fav} stronger on {surface}")
 
-        # xG advantage
-        xg_sup = ctx.get("xg_superiority", 0)
-        if abs(xg_sup) > 0.3:
-            better = "Home" if xg_sup > 0 else "Away"
-            factors.append(
-                f"{better} has xG superiority ({xg_sup:+.2f})"
-            )
+        h2h_edge = ctx.get("h2h_win_rate_diff", 0.0)
+        if abs(h2h_edge) > 0.2:
+            fav = p1 if h2h_edge > 0 else p2
+            factors.append(f"{fav} leads head-to-head")
 
-        # H2H dominance
-        h2h_dom = ctx.get("h2h_dominance", 0)
-        if abs(h2h_dom) > 0.2:
-            dom = "Home" if h2h_dom > 0 else "Away"
-            factors.append(f"{dom} dominates H2H record")
+        fatigue = ctx.get("days_since_last_match_diff", 0.0)
+        if abs(fatigue) > 3:
+            rested = p1 if fatigue > 0 else p2
+            factors.append(f"{rested} has more rest")
 
-        # Referee factor
-        ref_strict = ctx.get("ref_strictness", 0.5)
-        if ref_strict > 0.7:
-            factors.append("Strict referee: expect more cards")
-        elif ref_strict < 0.3:
-            factors.append("Lenient referee: fewer stoppages expected")
-
-        # Sentiment
-        sent_diff = ctx.get("sentiment_diff", 0)
-        if abs(sent_diff) > 0.3:
-            positive_team = "Home" if sent_diff > 0 else "Away"
-            factors.append(f"{positive_team} has positive news momentum")
-
-        # Model vs Market disagreement
-        if odds.get("home", 0) > 0:
-            implied_h = 1 / odds["home"]
-            if probs[0] > implied_h + 0.08:
+        if odds.get("player1", 0) > 0:
+            implied_p1 = 1 / odds["player1"]
+            if prob_p1 > implied_p1 + 0.06:
                 factors.append(
-                    f"Market underestimates Home "
-                    f"(model: {probs[0]:.0%} vs market: {implied_h:.0%})"
+                    f"Market underestimates {p1} "
+                    f"(model {prob_p1:.0%} vs market {implied_p1:.0%})"
                 )
-            if probs[2] > 1/odds.get("away", 99) + 0.08:
+        if odds.get("player2", 0) > 0:
+            implied_p2 = 1 / odds["player2"]
+            if (1 - prob_p1) > implied_p2 + 0.06:
                 factors.append(
-                    f"Market underestimates Away "
-                    f"(model: {probs[2]:.0%} vs market: {1/odds['away']:.0%})"
+                    f"Market underestimates {p2} "
+                    f"(model {1 - prob_p1:.0%} vs market {implied_p2:.0%})"
                 )
 
-        if not factors:
-            factors.append("No standout factors - standard form-based prediction")
-
-        # WC-specific factors (WK bot)
-        if ctx.get("is_wc"):
-            if ctx.get("altitude_effect", 1.0) < 0.95:
-                factors.append("High altitude (e.g. Azteca): lower scoring, adaptation matters")
-            cf = ctx.get("crowd_factor", 1.0)
-            if cf > 1.02:
-                factors.append("Large crowd / partisan atmosphere may boost hosts")
-            ca = ctx.get("climate_adapt", 1.0)
-            if ca < 0.97:
-                factors.append("Team adaptation / travel factor is a negative for visitors")
-            if ctx.get("stage_importance", 1.0) > 1.1:
-                factors.append("Knockout pressure increases variance - value can hide in underdogs")
-
-        return factors
+        return factors or ["Standard form-based prediction"]
 
     def _assess_risk(
         self,
         confidence: float,
         value: float,
-        ctx: Dict[str, float]
+        ctx: Dict[str, float],
     ) -> str:
-        """Assess bet risk level."""
         score = 0
-
-        if confidence > 0.65:
+        if confidence > 0.68:
             score -= 1
-        elif confidence < 0.45:
+        elif confidence < 0.52:
             score += 2
-
-        if value > 0.15:
+        if value > 0.12:
             score -= 1
         elif value < 0.03:
             score += 1
-
-        # High injury count = unpredictable
-        total_missing = (
-            ctx.get("home_missing_key_count", 0) +
-            ctx.get("away_missing_key_count", 0)
-        )
-        if total_missing >= 3:
+        if ctx.get("injury_flag", 0) > 0:
             score += 1
-
         if score <= 0:
             return "low"
-        elif score <= 2:
+        if score <= 2:
             return "medium"
-        else:
-            return "high"
+        return "high"
 
     def filter_value_bets(
         self,
-        recommendations: List[BetRecommendation]
+        recommendations: List[BetRecommendation],
     ) -> List[BetRecommendation]:
-        """
-        Filter recommendations to only include genuine value bets.
-        """
-        value_bets = []
-        for rec in recommendations:
-            if (rec.best_value >= self.min_value and
-                    rec.confidence >= self.conf_threshold):
-                value_bets.append(rec)
-
-        # Sort by value (highest first)
-        value_bets.sort(key=lambda r: r.best_value, reverse=True)
+        value_bets = [
+            rec
+            for rec in recommendations
+            if rec.best_value >= self.min_value
+            and rec.confidence >= self.conf_threshold
+        ]
+        value_bets.sort(key=lambda rec: rec.best_value, reverse=True)
         return value_bets
