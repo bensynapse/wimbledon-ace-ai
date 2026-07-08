@@ -35,6 +35,7 @@ data/
 !data/intelligence/
 !data/charting/manual_overrides.csv
 output/
+!output/*.md
 *.pkl
 *.joblib
 *.h5
