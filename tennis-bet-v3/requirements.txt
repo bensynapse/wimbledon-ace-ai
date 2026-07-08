@@ -1,0 +1,7 @@
+typer[all]
+rich
+pandas
+numpy
+openpyxl
+tweepy
+python-dotenv
