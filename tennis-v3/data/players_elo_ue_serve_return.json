@@ -1,0 +1,1 @@
+{"players": [{"name": "Casper Ruud", "elo": 2031, "elo_hard": 1900, "elo_clay": 1966, "elo_grass": 1426}, {"name": "Carlos Alcaraz", "elo": 2129, "elo_hard": 1991, "elo_clay": 2016, "elo_grass": 1572}], "calculation": "Elo difference to implied prob + serve/return/under pressure + qualitative confirmation"}

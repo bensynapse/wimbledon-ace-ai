@@ -1,0 +1,1 @@
+Alle Elo, UE, serve, return ratings uit screenshots zijn nu in de repo. Je kunt ze importeren in de xlsx.
