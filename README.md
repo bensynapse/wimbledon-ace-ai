@@ -37,6 +37,7 @@ pip install -r requirements.txt
 | [Open-Meteo](https://open-meteo.com/) | Weather (heat, wind) | Free |
 | [Kaggle guillemservera/tennis](https://www.kaggle.com/datasets/guillemservera/tennis) | **WTA** + ATP history | Free (API token) |
 | [api-tennis.com](https://api-tennis.com/) | Optional paid fallback | ~$15–30/mo |
+| [Live Tennis API](https://livetennisapi.com/) | Optional extra source for upcoming fixtures | Free tier 1,000 req/day |
 | Telegram Bot API | Daily alerts | Free |
 
 > De klassieke **Jeff Sackmann `tennis_atp`** repo is offline. **TML-Database** is de actieve opvolger met live updates tot 2026.

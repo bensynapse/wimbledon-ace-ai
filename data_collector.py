@@ -23,6 +23,7 @@ from config import (
 )
 from data_sources.github_tennis import GitHubTennisSource
 from data_sources.kaggle_tennis import KaggleTennisSource
+from data_sources.livetennis import LiveTennisSource
 
 logger = logging.getLogger(__name__)
 
@@ -275,6 +276,7 @@ class LiveFixtureCollector:
         self._tennis: Optional[TennisAPIClient] = None
         self.odds_api = OddsAPIClient()
         self.github = GitHubTennisSource()
+        self.livetennis = LiveTennisSource()
 
     @property
     def tennis(self) -> TennisAPIClient:
@@ -282,11 +284,37 @@ class LiveFixtureCollector:
             self._tennis = TennisAPIClient()
         return self._tennis
 
+    def _fixtures_from_livetennis(self, tour: str, days_ahead: int) -> List[Dict]:
+        """Upcoming fixtures from the Live Tennis API. Empty unless configured.
+
+        Fills in `surface` with the same tournament-name inference the other
+        paths use when the API does not report one.
+        """
+        if not self.livetennis.enabled:
+            return []
+
+        fixtures = self.livetennis.get_upcoming_fixtures(tour, days_ahead=days_ahead)
+        for fix in fixtures:
+            if not fix.get("surface"):
+                fix["surface"] = _infer_surface({
+                    "tournament_name": fix.get("tournament", ""),
+                    "tournament_round": fix.get("round", ""),
+                })
+        return fixtures
+
     def get_upcoming_fixtures(
         self,
         tour: str,
         days_ahead: int = 2,
     ) -> List[Dict]:
+        # Opt-in preference. Without DATA_SOURCE=livetennis and a key, this is
+        # skipped and the order below is exactly as it was.
+        if DATA_SOURCE == "livetennis":
+            fixtures = self._fixtures_from_livetennis(tour, days_ahead)
+            if fixtures:
+                logger.info("Loaded %d fixtures from Live Tennis API", len(fixtures))
+                return fixtures
+
         if self.odds_api.enabled:
             fixtures = self._fixtures_from_odds_api(tour)
             if fixtures:
@@ -294,6 +322,12 @@ class LiveFixtureCollector:
                 return fixtures
 
         if not self.tennis.enabled:
+            # Last chance before demo data: ask Live Tennis API if it is set up.
+            fixtures = self._fixtures_from_livetennis(tour, days_ahead)
+            if fixtures:
+                logger.info("Loaded %d fixtures from Live Tennis API", len(fixtures))
+                return fixtures
+
             logger.warning(
                 "No ODDS_API_KEY or TENNIS_API_KEY — using demo fixtures. "
                 "Set ODDS_API_KEY for live upcoming matches."
@@ -328,6 +362,14 @@ class LiveFixtureCollector:
                 "surface": _infer_surface(fix),
                 "status": fix.get("event_status", ""),
             })
+
+        if not upcoming:
+            # api-tennis.com answered but had nothing for this window.
+            fallback = self._fixtures_from_livetennis(tour, days_ahead)
+            if fallback:
+                logger.info("Loaded %d fixtures from Live Tennis API", len(fallback))
+                return fallback
+
         return upcoming
 
     def attach_odds(self, fixtures: List[Dict], tour: str) -> List[Dict]:

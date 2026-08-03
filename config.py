@@ -43,6 +43,7 @@ GITHUB_TOPICS = [
 # Paste keys here, or set env vars (see .env.example)
 ODDS_API_KEY = os.getenv("ODDS_API_KEY") or ""
 TENNIS_API_KEY = os.getenv("TENNIS_API_KEY") or ""
+LIVETENNIS_API_KEY = os.getenv("LIVETENNIS_API_KEY") or ""
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or ""
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID") or ""
 
@@ -106,6 +107,7 @@ OVERALL_ELO_WEIGHT = 0.65
 
 DATA_SOURCES = {
     "tennis_api": "https://api.api-tennis.com/tennis/",
+    "livetennis_api": "https://api.livetennisapi.com/api/public/v1",
     "odds_api": "https://api.the-odds-api.com/v4",
     "weather_api": "https://api.open-meteo.com/v1/forecast",
 }
@@ -118,6 +120,7 @@ PATHS = {
 API_KEYS = {
     "odds_api": ODDS_API_KEY,
     "tennis_api": TENNIS_API_KEY,
+    "livetennis_api": LIVETENNIS_API_KEY,
     "telegram": TELEGRAM_BOT_TOKEN,
 }
 
@@ -135,6 +138,7 @@ def api_status() -> dict:
         "tennis_abstract_elo": Path(f"{PATHS['data_dir']}tennis_abstract/atp_elo.parquet").exists(),
         "data_source": DATA_SOURCE,
         "tennis_api": bool(TENNIS_API_KEY),
+        "livetennis_api": bool(LIVETENNIS_API_KEY),
         "odds_api": bool(ODDS_API_KEY),
         "weather_api": True,
         "telegram": bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID),
